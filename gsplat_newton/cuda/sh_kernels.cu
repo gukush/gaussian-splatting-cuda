@@ -8,109 +8,127 @@
 #include "SphericalHarmonics.h"
 #include "Utils.cuh"
 
-namespace gsplat {
-
-namespace cg = cooperative_groups;
-
-// Evaluate spherical harmonics bases at unit direction for high orders using
-// approach described by Efficient Spherical Harmonic Evaluation, Peter-Pike
-// Sloan, JCGT 2013 See https://jcgt.org/published/0002/02/06/ for reference
-// implementation
-
 template <typename scalar_t>
-__device__ void sh_coeffs_to_color_fast(
-    const uint32_t degree,  // degree of SH to be evaluated
-    const uint32_t c,       // color channel
-    const vec3 &dir,        // [3]
-    const scalar_t *coeffs, // [K, 3]
-    // output
-    scalar_t *colors // [3]
+__device__ void chain_rule_color_position_kernel(
+    const glm::vec3 &p_k,                 // Input position
+    const glm::vec3 &camera_center,       // Camera center
+    const glm::vec3 &color_dir_grad,      // ∂c/∂r (gradient in direction space)
+    const scalar_t *color_dir_hess,       // ∂²c/∂r² (Hessian in direction space, packed as [xx, yy, zz, xy, xz, yz])
+    // Outputs
+    glm::vec3 *color_pos_grad,           // ∂c/∂p (gradient in position space)
+    scalar_t *color_pos_hess             // ∂²c/∂p² (Hessian in position space, packed as [xx, yy, zz, xy, xz, yz])
 ) {
-    float result = 0.2820947917738781f * coeffs[c];
-    if (degree >= 1) {
-        // Normally rsqrt is faster than sqrt, but --use_fast_math will optimize
-        // sqrt on single precision, so we use sqrt here.
-        float inorm = rsqrtf(dir.x * dir.x + dir.y * dir.y + dir.z * dir.z);
-        float x = dir.x * inorm;
-        float y = dir.y * inorm;
-        float z = dir.z * inorm;
+    // 1. Compute ∂r/∂p and ∂²r/∂p²
+    glm::vec3 d = p_k - camera_center;
+    float L = glm::length(d);
+    glm::vec3 r = d / L;
 
-        result +=
-            0.48860251190292f * (-y * coeffs[1 * 3 + c] +
-                                 z * coeffs[2 * 3 + c] - x * coeffs[3 * 3 + c]);
-        if (degree >= 2) {
-            float z2 = z * z;
+    // Jacobian ∂r/∂p = (I - r rᵀ) / |d|
+    glm::mat3 I(1.0f);
+    glm::mat3 J = (I - glm::outerProduct(r, r)) * (1.0f / L);
 
-            float fTmp0B = -1.092548430592079f * z;
-            float fC1 = x * x - y * y;
-            float fS1 = 2.f * x * y;
-            float pSH6 = (0.9461746957575601f * z2 - 0.3153915652525201f);
-            float pSH7 = fTmp0B * x;
-            float pSH5 = fTmp0B * y;
-            float pSH8 = 0.5462742152960395f * fC1;
-            float pSH4 = 0.5462742152960395f * fS1;
+    // Extract J elements: J[i][j] = J[col=j][row=i]
+    float j00 = J[0][0], j10 = J[1][0], j20 = J[2][0];
+    float j01 = J[0][1], j11 = J[1][1], j21 = J[2][1];
+    float j02 = J[0][2], j12 = J[1][2], j22 = J[2][2];
 
-            result += pSH4 * coeffs[4 * 3 + c] + pSH5 * coeffs[5 * 3 + c] +
-                      pSH6 * coeffs[6 * 3 + c] + pSH7 * coeffs[7 * 3 + c] +
-                      pSH8 * coeffs[8 * 3 + c];
-            if (degree >= 3) {
-                float fTmp0C = -2.285228997322329f * z2 + 0.4570457994644658f;
-                float fTmp1B = 1.445305721320277f * z;
-                float fC2 = x * fC1 - y * fS1;
-                float fS2 = x * fS1 + y * fC1;
-                float pSH12 =
-                    z * (1.865881662950577f * z2 - 1.119528997770346f);
-                float pSH13 = fTmp0C * x;
-                float pSH11 = fTmp0C * y;
-                float pSH14 = fTmp1B * fC1;
-                float pSH10 = fTmp1B * fS1;
-                float pSH15 = -0.5900435899266435f * fC2;
-                float pSH9 = -0.5900435899266435f * fS2;
+    // 2. Compute gradient: gc_p = gc_r · J
+    glm::vec3 gc_p;
+    gc_p.x = color_dir_grad.x * j00 + color_dir_grad.y * j10 + color_dir_grad.z * j20;
+    gc_p.y = color_dir_grad.x * j01 + color_dir_grad.y * j11 + color_dir_grad.z * j21;
+    gc_p.z = color_dir_grad.x * j02 + color_dir_grad.y * j12 + color_dir_grad.z * j22;
+    *color_pos_grad = gc_p;
 
-                result +=
-                    pSH9 * coeffs[9 * 3 + c] + pSH10 * coeffs[10 * 3 + c] +
-                    pSH11 * coeffs[11 * 3 + c] + pSH12 * coeffs[12 * 3 + c] +
-                    pSH13 * coeffs[13 * 3 + c] + pSH14 * coeffs[14 * 3 + c] +
-                    pSH15 * coeffs[15 * 3 + c];
+    if (color_pos_hess == nullptr) return;
 
-                if (degree >= 4) {
-                    float fTmp0D =
-                        z * (-4.683325804901025f * z2 + 2.007139630671868f);
-                    float fTmp1C = 3.31161143515146f * z2 - 0.47308734787878f;
-                    float fTmp2B = -1.770130769779931f * z;
-                    float fC3 = x * fC2 - y * fS2;
-                    float fS3 = x * fS2 + y * fC2;
-                    float pSH20 =
-                        (1.984313483298443f * z * pSH12 -
-                         1.006230589874905f * pSH6);
-                    float pSH21 = fTmp0D * x;
-                    float pSH19 = fTmp0D * y;
-                    float pSH22 = fTmp1C * fC1;
-                    float pSH18 = fTmp1C * fS1;
-                    float pSH23 = fTmp2B * fC2;
-                    float pSH17 = fTmp2B * fS2;
-                    float pSH24 = 0.6258357354491763f * fC3;
-                    float pSH16 = 0.6258357354491763f * fS3;
+    // 3. Compute Hessian: H_p = Jᵀ H_r J + Σ_a (gc_r[a] * H_a)
 
-                    result += pSH16 * coeffs[16 * 3 + c] +
-                              pSH17 * coeffs[17 * 3 + c] +
-                              pSH18 * coeffs[18 * 3 + c] +
-                              pSH19 * coeffs[19 * 3 + c] +
-                              pSH20 * coeffs[20 * 3 + c] +
-                              pSH21 * coeffs[21 * 3 + c] +
-                              pSH22 * coeffs[22 * 3 + c] +
-                              pSH23 * coeffs[23 * 3 + c] +
-                              pSH24 * coeffs[24 * 3 + c];
-                }
-            }
-        }
-    }
+    // Term1 = Jᵀ H_r J
+    // Unpack input Hessian (color_dir_hess)
+    float h00 = color_dir_hess[0], h11 = color_dir_hess[1], h22 = color_dir_hess[2];
+    float h01 = color_dir_hess[3], h02 = color_dir_hess[4], h12 = color_dir_hess[5];
 
-    colors[c] = result;
+    // Compute Term1 components
+    float T1_xx = j00*(h00*j00 + h01*j10 + h02*j20)
+                + j10*(h01*j00 + h11*j10 + h12*j20)
+                + j20*(h02*j00 + h12*j10 + h22*j20);
+
+    float T1_xy = j00*(h00*j01 + h01*j11 + h02*j21)
+                + j10*(h01*j01 + h11*j11 + h12*j21)
+                + j20*(h02*j01 + h12*j11 + h22*j21);
+
+    float T1_xz = j00*(h00*j02 + h01*j12 + h02*j22)
+                + j10*(h01*j02 + h11*j12 + h12*j22)
+                + j20*(h02*j02 + h12*j12 + h22*j22);
+
+    float T1_yy = j01*(h00*j01 + h01*j11 + h02*j21)
+                + j11*(h01*j01 + h11*j11 + h12*j21)
+                + j21*(h02*j01 + h12*j11 + h22*j21);
+
+    float T1_yz = j01*(h00*j02 + h01*j12 + h02*j22)
+                + j11*(h01*j02 + h11*j12 + h12*j22)
+                + j21*(h02*j02 + h12*j12 + h22*j22);
+
+    float T1_zz = j02*(h00*j02 + h01*j12 + h02*j22)
+                + j12*(h01*j02 + h11*j12 + h12*j22)
+                + j22*(h02*j02 + h12*j12 + h22*j22);
+
+    // Term2 = Σ_a gc_r[a] * H_a (second derivatives of r components)
+    float L2 = L*L, L3 = L2*L, L5 = L3*L2;
+    auto δ = [](int i,int j){ return (i==j) ? 1.0f : 0.0f; };
+    auto A = [&](int i,int j,int k) {
+        float di=d[i], dj=d[j], dk=d[k];
+        return - (δ(i,j)*dk + δ(i,k)*dj + δ(j,k)*di)/L3
+               + 3.0f*di*dj*dk/L5;
+    };
+
+    // Compute components of H0, H1, H2 (second derivatives of r components)
+    float T2_xx = color_dir_grad.x * A(0,0,0) + color_dir_grad.y * A(1,0,0) + color_dir_grad.z * A(2,0,0);
+    float T2_xy = color_dir_grad.x * A(0,0,1) + color_dir_grad.y * A(1,0,1) + color_dir_grad.z * A(2,0,1);
+    float T2_xz = color_dir_grad.x * A(0,0,2) + color_dir_grad.y * A(1,0,2) + color_dir_grad.z * A(2,0,2);
+    float T2_yy = color_dir_grad.x * A(0,1,1) + color_dir_grad.y * A(1,1,1) + color_dir_grad.z * A(2,1,1);
+    float T2_yz = color_dir_grad.x * A(0,1,2) + color_dir_grad.y * A(1,1,2) + color_dir_grad.z * A(2,1,2);
+    float T2_zz = color_dir_grad.x * A(0,2,2) + color_dir_grad.y * A(1,2,2) + color_dir_grad.z * A(2,2,2);
+
+    // Final Hessian output
+    color_pos_hess[0] = T1_xx + T2_xx;  // xx
+    color_pos_hess[1] = T1_yy + T2_yy;  // yy
+    color_pos_hess[2] = T1_zz + T2_zz;  // zz
+    color_pos_hess[3] = T1_xy + T2_xy;  // xy
+    color_pos_hess[4] = T1_xz + T2_xz;  // xz
+    color_pos_hess[5] = T1_yz + T2_yz;  // yz
 }
 
+// Wrapper kernel for batched processing
 template <typename scalar_t>
-__device__ void sh_coeffs_to_color_fast_vjp(
+__global__ void chain_rule_color_position_batched(
+    const glm::vec3 *positions,         // [N]
+    const glm::vec3 *camera_center,     // [1] or [N]
+    const glm::vec3 *color_dir_grad,    // [N]
+    const scalar_t *color_dir_hess,     // [N*6] packed as [xx, yy, zz, xy, xz, yz]
+    glm::vec3 *color_pos_grad,          // [N]
+    scalar_t *color_pos_hess,           // [N*6] packed as [xx, yy, zz, xy, xz, yz]
+    int N
+) {
+    int k = blockIdx.x * blockDim.x + threadIdx.x;
+    if (k >= N) return;
+
+    const glm::vec3 cam_center = camera_center[0]; // Assuming single camera center for all points
+
+    chain_rule_color_position_kernel<scalar_t>(
+        positions[k],
+        cam_center,
+        color_dir_grad[k],
+        color_dir_hess ? &color_dir_hess[k*6] : nullptr,
+        &color_pos_grad[k],
+        color_pos_hess ? &color_pos_hess[k*6] : nullptr
+    );
+}
+
+
+
+template <typename scalar_t>
+__device__ void sh_coeffs_to_color_fast_LN(
     const uint32_t degree,    // degree of SH to be evaluated
     const uint32_t c,         // color channel
     const vec3 &dir,          // [3]
@@ -234,6 +252,9 @@ __device__ void sh_coeffs_to_color_fast_vjp(
         }
         return;
     }
+    const float alpha_ = -0.5900435899266435f;
+    const float beta_ =  1.445305721320277f;
+    const float gamma_ =  2.285228997322329f;
 
     float fTmp0C = -2.285228997322329f * z2 + 0.4570457994644658f;
     float fTmp1B = 1.445305721320277f * z;
@@ -294,6 +315,39 @@ __device__ void sh_coeffs_to_color_fast_vjp(
                (pSH12_z * coeffs[12 * 3 + c] + pSH13_z * coeffs[13 * 3 + c] +
                 pSH11_z * coeffs[11 * 3 + c] + pSH14_z * coeffs[14 * 3 + c] +
                 pSH10_z * coeffs[10 * 3 + c]);
+        // ℓ=3 SECOND‐PARTIALS
+        const float S9_xx =  6.f * alpha_ * y;
+        const float S9_xy =  6.f * alpha_ * x;
+        const float S9_yy = -6.f * alpha_ * y;
+
+        const float S10_xy = 2.f * beta_ * z;
+        const float S10_xz = 2.f * beta_ * y;
+        const float S10_yz = 2.f * beta_ * x;
+
+        const float S11_yz = -2.f * gamma_ * z;
+        const float S11_zz = -2.f * gamma_ * y;
+
+        const float S12_zz =  6.f * 1.865881662950577f * z;
+
+        const float S13_xz = -2.f * gamma_ * z;
+        const float S13_zz = -2.f * gamma_ * x;
+
+        const float S14_xx =  2.f * beta_ * z;
+        const float S14_yy = -2.f * beta_ * z;
+        const float S14_xz =  2.f * beta_ * x;
+        const float S14_yz = -2.f * beta_ * y;
+
+        const float S15_xx =  6.f * alpha_ * x;
+        const float S15_xy = -6.f * alpha_ * y;
+        const float S15_yy = -6.f * alpha_ * x;
+
+        // accumulate ℓ=3
+        H_dir[0]+=w_color*(S9_xx*coeffs[9*3+c]  + S14_xx*coeffs[14*3+c] + S15_xx*coeffs[15*3+c]);
+        H_dir[1]+=w_color*(S9_yy*coeffs[9*3+c]  + S14_yy*coeffs[14*3+c] + S15_yy*coeffs[15*3+c]);
+        H_dir[2]+=w_color*(S11_zz*coeffs[11*3+c]+ S12_zz*coeffs[12*3+c] + S13_zz*coeffs[13*3+c]);
+        H_dir[3]+=w_color*(S9_xy*coeffs[9*3+c]  + S10_xy*coeffs[10*3+c] + S15_xy*coeffs[15*3+c]);
+        H_dir[4]+=w_color*(S10_xz*coeffs[10*3+c]+ S11_yz*coeffs[11*3+c] + S13_xz*coeffs[13*3+c]);
+        H_dir[5]+=w_color*(S10_yz*coeffs[10*3+c]+ S14_yz*coeffs[14*3+c] + S11_yz*coeffs[11*3+c]);
     }
 
     if (degree < 4) {
@@ -308,6 +362,23 @@ __device__ void sh_coeffs_to_color_fast_vjp(
         }
         return;
     }
+    // auto‐generated second‐partials ℓ=4 (cleaned):
+    const float S16_xx = 15.020057650780231f * x * y;
+    const float S16_yy =-15.020057650780231f * x * y;
+    const float S16_xy =  7.5100288253901155f * (x*x - y*y);
+
+    const float S17_xx =-10.620784618679586f * y * z;
+    const float S17_yy = 10.620784618679586f * y * z;
+    const float S17_xy =-10.620784618679586f * x * z;
+    const float S17_xz =-10.620784618679586f * x * y;
+    const float S17_yz =-5.3103923093397931f * (x*x - y*y);
+
+    const float S18_xx = 6.6232228703029197f * z*z - 0.94617469575756f;
+    const float S18_yy =-S18_xx;
+    const float S18_xy = 6.6232228703029197f * z*z - 0.94617469575756f;
+    const float S18_xz = 13.246445740605839f * y * z;
+    const float S18_yz = 13.246445740605839f * x * z;
+    const float S18_zz = 13.246445740605839f * x * y;
 
     float fTmp0D = z * (-4.683325804901025f * z2 + 2.007139630671868f);
     float fTmp1C = 3.31161143515146f * z2 - 0.47308734787878f;
@@ -391,171 +462,57 @@ __device__ void sh_coeffs_to_color_fast_vjp(
         v_dir->x = v_d.x;
         v_dir->y = v_d.y;
         v_dir->z = v_d.z;
+
+            float w = w_color;
+
+        // pSH16 (idx 16)
+        H_dir[0] += w * S16_xx * coeffs[16*3 + c];  // Hxx
+        H_dir[1] += w * S16_yy * coeffs[16*3 + c];  // Hyy
+        H_dir[3] += w * S16_xy * coeffs[16*3 + c];  // Hxy
+
+        // pSH17 (idx 17)
+        H_dir[0] += w * S17_xx * coeffs[17*3 + c];  // Hxx
+        H_dir[1] += w * S17_yy * coeffs[17*3 + c];  // Hyy
+        H_dir[3] += w * S17_xy * coeffs[17*3 + c];  // Hxy
+        H_dir[4] += w * S17_xz * coeffs[17*3 + c];  // Hxz
+        H_dir[5] += w * S17_yz * coeffs[17*3 + c];  // Hyz
+
+        // pSH18 (idx 18)
+        H_dir[0] += w * S18_xx * coeffs[18*3 + c];  // Hxx
+        H_dir[1] += w * S18_yy * coeffs[18*3 + c];  // Hyy
+        H_dir[2] += w * S18_zz * coeffs[18*3 + c];  // Hzz
+        H_dir[3] += w * S18_xy * coeffs[18*3 + c];  // Hxy
+        H_dir[4] += w * S18_xz * coeffs[18*3 + c];  // Hxz
+        H_dir[5] += w * S18_yz * coeffs[18*3 + c];  // Hyz
+
+        // pSH19 (idx 19)
+        H_dir[2] += w * S19_zz * coeffs[19*3 + c];  // Hzz
+        H_dir[5] += w * S19_yz * coeffs[19*3 + c];  // Hyz
+
+        // pSH20 (idx 20)
+        H_dir[2] += w * S20_zz * coeffs[20*3 + c];  // Hzz
+
+        // pSH21 (idx 21)
+        H_dir[2] += w * S21_zz * coeffs[21*3 + c];  // Hzz
+        H_dir[4] += w * S21_xz * coeffs[21*3 + c];  // Hxz
+
+        // pSH22 (idx 22)
+        H_dir[0] += w * S22_xx * coeffs[22*3 + c];  // Hxx
+        H_dir[1] += w * S22_yy * coeffs[22*3 + c];  // Hyy
+        H_dir[2] += w * S22_zz * coeffs[22*3 + c];  // Hzz
+        H_dir[4] += w * S22_xz * coeffs[22*3 + c];  // Hxz
+        H_dir[5] += w * S22_yz * coeffs[22*3 + c];  // Hyz
+
+        // pSH23 (idx 23)
+        H_dir[0] += w * S23_xx * coeffs[23*3 + c];  // Hxx
+        H_dir[1] += w * S23_yy * coeffs[23*3 + c];  // Hyy
+        H_dir[3] += w * S23_xy * coeffs[23*3 + c];  // Hxy
+        H_dir[4] += w * S23_xz * coeffs[23*3 + c];  // Hxz
+        H_dir[5] += w * S23_yz * coeffs[23*3 + c];  // Hyz
+
+        // pSH24 (idx 24)
+        H_dir[0] += w * S24_xx * coeffs[24*3 + c];  // Hxx
+        H_dir[1] += w * S24_yy * coeffs[24*3 + c];  // Hyy
+        H_dir[3] += w * S24_xy * coeffs[24*3 + c];  // Hxy
     }
 }
-
-template <typename scalar_t>
-__global__ void spherical_harmonics_fwd_kernel(
-    const uint32_t N,
-    const uint32_t K,
-    const uint32_t degrees_to_use,
-    const vec3 *__restrict__ dirs,       // [N, 3]
-    const scalar_t *__restrict__ coeffs, // [N, K, 3]
-    const bool *__restrict__ masks,      // [N]
-    scalar_t *__restrict__ colors        // [N, 3]
-) {
-    // parallelize over N * 3
-    uint32_t idx = cg::this_grid().thread_rank();
-    if (idx >= N * 3) {
-        return;
-    }
-    uint32_t elem_id = idx / 3;
-    uint32_t c = idx % 3; // color channel
-    if (masks != nullptr && !masks[elem_id]) {
-        return;
-    }
-    sh_coeffs_to_color_fast(
-        degrees_to_use,
-        c,
-        dirs[elem_id],
-        coeffs + elem_id * K * 3,
-        colors + elem_id * 3
-    );
-}
-
-void launch_spherical_harmonics_fwd_kernel(
-    // inputs
-    const uint32_t degrees_to_use,
-    const at::Tensor dirs,                // [..., 3]
-    const at::Tensor coeffs,              // [..., K, 3]
-    const at::optional<at::Tensor> masks, // [...]
-    // outputs
-    at::Tensor colors // [..., 2]
-) {
-    const uint32_t K = coeffs.size(-2);
-    const uint32_t N = dirs.numel() / 3;
-
-    // parallelize over N * 3
-    int64_t n_elements = N * 3;
-    dim3 threads(256);
-    dim3 grid((n_elements + threads.x - 1) / threads.x);
-    int64_t shmem_size = 0; // No shared memory used in this kernel
-
-    if (n_elements == 0) {
-        // skip the kernel launch if there are no elements
-        return;
-    }
-
-    AT_DISPATCH_FLOATING_TYPES(
-        dirs.scalar_type(),
-        "spherical_harmonics_fwd_kernel",
-        [&]() {
-            spherical_harmonics_fwd_kernel<scalar_t>
-                <<<grid,
-                   threads,
-                   shmem_size,
-                   at::cuda::getCurrentCUDAStream()>>>(
-                    N,
-                    K,
-                    degrees_to_use,
-                    reinterpret_cast<vec3 *>(dirs.data_ptr<scalar_t>()),
-                    coeffs.data_ptr<scalar_t>(),
-                    masks.has_value() ? masks.value().data_ptr<bool>()
-                                      : nullptr,
-                    colors.data_ptr<scalar_t>()
-                );
-        }
-    );
-}
-
-template <typename scalar_t>
-__global__ void spherical_harmonics_bwd_kernel(
-    const uint32_t N,
-    const uint32_t K,
-    const uint32_t degrees_to_use,
-    const vec3 *__restrict__ dirs,         // [N, 3]
-    const scalar_t *__restrict__ coeffs,   // [N, K, 3]
-    const bool *__restrict__ masks,        // [N]
-    const scalar_t *__restrict__ v_colors, // [N, 3
-    scalar_t *__restrict__ v_coeffs,       // [N, K, 3]
-    scalar_t *__restrict__ v_dirs          // [N, 3] optional
-) {
-    // parallelize over N * 3
-    uint32_t idx = cg::this_grid().thread_rank();
-    if (idx >= N * 3) {
-        return;
-    }
-    uint32_t elem_id = idx / 3;
-    uint32_t c = idx % 3; // color channel
-    if (masks != nullptr && !masks[elem_id]) {
-        return;
-    }
-
-    vec3 v_dir = {0.f, 0.f, 0.f};
-    sh_coeffs_to_color_fast_vjp(
-        degrees_to_use,
-        c,
-        dirs[elem_id],
-        coeffs + elem_id * K * 3,
-        v_colors + elem_id * 3,
-        v_coeffs + elem_id * K * 3,
-        v_dirs == nullptr ? nullptr : &v_dir
-    );
-    if (v_dirs != nullptr) {
-        gpuAtomicAdd(v_dirs + elem_id * 3, v_dir.x);
-        gpuAtomicAdd(v_dirs + elem_id * 3 + 1, v_dir.y);
-        gpuAtomicAdd(v_dirs + elem_id * 3 + 2, v_dir.z);
-    }
-}
-
-void launch_spherical_harmonics_bwd_kernel(
-    // inputs
-    const uint32_t degrees_to_use,
-    const at::Tensor dirs,                // [..., 3]
-    const at::Tensor coeffs,              // [..., K, 3]
-    const at::optional<at::Tensor> masks, // [...]
-    const at::Tensor v_colors,            // [..., 3]
-    // outputs
-    at::Tensor v_coeffs,            // [..., K, 3]
-    at::optional<at::Tensor> v_dirs // [..., 3]
-) {
-    const uint32_t K = coeffs.size(-2);
-    const uint32_t N = dirs.numel() / 3;
-
-    // parallelize over N * 3
-    int64_t n_elements = N * 3;
-    dim3 threads(256);
-    dim3 grid((n_elements + threads.x - 1) / threads.x);
-    int64_t shmem_size = 0; // No shared memory used in this kernel
-
-    if (n_elements == 0) {
-        // skip the kernel launch if there are no elements
-        return;
-    }
-
-    AT_DISPATCH_FLOATING_TYPES(
-        dirs.scalar_type(),
-        "spherical_harmonics_bwd_kernel",
-        [&]() {
-            spherical_harmonics_bwd_kernel<scalar_t>
-                <<<grid,
-                   threads,
-                   shmem_size,
-                   at::cuda::getCurrentCUDAStream()>>>(
-                    N,
-                    K,
-                    degrees_to_use,
-                    reinterpret_cast<vec3 *>(dirs.data_ptr<scalar_t>()),
-                    coeffs.data_ptr<scalar_t>(),
-                    masks.has_value() ? masks.value().data_ptr<bool>()
-                                      : nullptr,
-                    v_colors.data_ptr<scalar_t>(),
-                    v_coeffs.data_ptr<scalar_t>(),
-                    v_dirs.has_value() ? v_dirs.value().data_ptr<scalar_t>()
-                                       : nullptr
-                );
-        }
-    );
-}
-
-} // namespace gsplat
