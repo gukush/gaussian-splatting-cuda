@@ -51,4 +51,13 @@ struct LocalNewtonContext {
     torch::Tensor d_Sigma_dtheta; // [C, N, 2, 2] - ∂Σ/∂θ
     torch::Tensor H_Sigma_dtheta; // [C, N, 2, 2] - ∂²Σ/∂θ²
     torch::Tensor T_matrices;     // [C, N, 2, 3] - Transformation matrix for scaling
+    // ==================================
+    // OTHER IMPORTANT DATA i.e. TILE INTERSECTION
+    // ==================================
+    torch::Tensor flatten_ids;
+    torch::Tensor last_ids;
+    torch::Tensor tile_offsets;
+    torch::Tensor render_alphas;
+    torch::Tensor dL_d_color_img;
+    torch::Tensor H_L_color_img;;
 };

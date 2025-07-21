@@ -9,20 +9,22 @@ namespace gsplat {
 
 void local_newton_backward_and_update(
     const gsplat_newton::LocalNewtonContext& context,
-    at::Tensor& means,
-    at::Tensor& scales,
-    at::Tensor& quats,
-    at::Tensor& opacities,
-    at::Tensor& sh_coeffs,
-    const at::Tensor& dL_d_color_img,
-    const at::Tensor& H_L_color_img,
-    const at::Tensor& render_alphas,
-    const at::Tensor& last_ids,
-    const at::Tensor& tile_offsets,
-    const at::Tensor& flatten_ids,
+    SplatData& gaussian_model,
     uint32_t image_width,
     uint32_t image_height
 ) {
+
+    at::Tensor& means = gaussian_model.get_means();
+    at::Tensor& scales = gaussian_model.get_scaling();
+    at::Tensor& quats = gaussian_model.get_rotation();
+    at::Tensor& opacities = gaussian_model.get_opacity();
+    at::Tensor& sh_coeffs = gaussian_model.get_shs();
+    const at::Tensor& render_alphas = context.render_alphas;
+    const at::Tensor& last_ids = context.last_ids;
+    const at::Tensor& tile_offsets = context.tile_offsets;
+    const at::Tensor& flatten_ids = context.flatten_ids;
+    const at::Tensor& dL_d_color_img = context.dL_d_color_img;
+    const at::Tensor& H_L_color_img = context.H_L_color_img;
     DEVICE_GUARD(means);
     // Input checks
     CHECK_INPUT(means);

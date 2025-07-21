@@ -243,13 +243,18 @@ RenderOutput rasterize_newton_step(
     auto rendered_image = std::get<0>(raster_results);
     auto rendered_alpha = std::get<1>(raster_results);
     auto last_ids = std::get<2>(raster_results);
-
+    if(context) {
+        context.flatten_ids = flatten_ids;
+        context.last_ids = last_ids;
+        context.tile_offsets = isect_offsets;
+        context.render_alphas = rendered_alpha;
+    }
     // ========================================================================
     // 5. LOSS & DERIVATIVE AGGREGATION
     // ========================================================================
     // Compute loss and its derivatives, then run the aggregation kernel which
     // acts as the "backward" pass for the rasterizer.
-
+    /*
     // Compute loss and its derivatives w.r.t. pixel colors
     auto [loss, dL_dcolor, d2L_dcolor2] = gsplat_newton::compute_loss_and_derivatives(
         rendered_image,
@@ -266,7 +271,7 @@ RenderOutput rasterize_newton_step(
         dL_dcolor,
         d2L_dcolor2
     );
-
+    */
     // ========================================================================
     // 6. PREPARE OUTPUT
     // ========================================================================

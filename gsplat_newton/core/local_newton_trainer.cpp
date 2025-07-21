@@ -6,6 +6,7 @@
 #include <iostream>
 #include <numeric>
 #include <torch/torch.h>
+#include "local_newton_context.hpp"
 
 namespace gs {
 
@@ -177,7 +178,7 @@ namespace gs {
 
     bool Trainer::train_step(int iter, Camera* cam, torch::Tensor gt_image, RenderMode render_mode) {
         current_iteration_ = iter;
-
+        LocalNewtonContext ctx;
         // Check control requests at the beginning
         handle_control_requests(iter);
 
@@ -198,6 +199,8 @@ namespace gs {
         }
         // TODO MODIFY THE RASTERIZE TO USE NEWTON RASTERIZE WHICH ALSO TAKES NEWTON CONTEXT AS ARGUMENT.
         // Use the render mode from parameters
+        // USE DIFFERENT RASTERIZE and pass ctx to it
+        /*
         auto render_fn = [this, &cam, render_mode]() {
             return gs::rasterize(
                 *cam,
@@ -207,6 +210,19 @@ namespace gs {
                 false,
                 false,
                 render_mode);
+        };
+        */
+
+        auto render_fn = [this, &cam, render_mod]() {
+            return gs::rasterize_newton_step(
+                *cam,
+                strategy_->get_model(),
+                background_,
+                1.0f,
+                false,
+                false,
+                render_mode
+            );
         };
 
         RenderOutput r_output;
@@ -232,7 +248,12 @@ namespace gs {
         current_loss_ = loss.item<float>();
 
         // loss.backward(); WE USE LOCAL NEWTON!
-
+        local_newton_backward_and_update(
+            ctx,
+            strategy_->get_model(),
+            static_cast<int>(viewpoint_camera->image_width()),
+            static_cast<int>(cam->image_height())
+        );
 
 
         {
