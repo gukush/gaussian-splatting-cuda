@@ -383,7 +383,17 @@ void launch_projection_ewa_3dgs_fused_fwd_kernel_LN(
     at::Tensor means2d,                    // [C, N, 2]
     at::Tensor depths,                     // [C, N]
     at::Tensor conics,                     // [C, N, 3]
-    at::optional<at::Tensor> compensations // [C, N] optional
+    at::optional<at::Tensor> compensations, // [C, N] optional
+    // outputs for Local Newton
+    at::Tensor jacobians,                  // [C, N, 3, 2]
+    at::Tensor H_mean_y,                   // [C, N, 3, 3]
+    at::Tensor H_mean_x,                   // [C, N, 3, 3]
+    at::Tensor dSigma_dx,                  // [C, N, 2, 2]
+    at::Tensor dSigma_dy,                  // [C, N, 2, 2]
+    at::Tensor dSigma_dz,                  // [C, N, 2, 2]
+    at::Tensor H_Sigma,                    // [C, N, 3] (stores [H_S_xz, H_S_yz, H_S_zz])
+    at::Tensor dr_dp,                      // [C, N, 3, 3]
+    at::Tensor d2r_dp2_compact             // [C, N, 18]
 ) {
     uint32_t N = means.size(0);    // number of gaussians
     uint32_t C = viewmats.size(0); // number of cameras
@@ -400,9 +410,9 @@ void launch_projection_ewa_3dgs_fused_fwd_kernel_LN(
 
     AT_DISPATCH_FLOATING_TYPES(
         means.scalar_type(),
-        "projection_ewa_3dgs_fused_fwd_kernel",
+        "projection_ewa_3dgs_fused_fwd_kernel_LN",
         [&]() {
-            projection_ewa_3dgs_fused_fwd_kernel<scalar_t>
+            projection_ewa_3dgs_fused_fwd_kernel_LN<scalar_t>
                 <<<grid,
                    threads,
                    shmem_size,
@@ -410,14 +420,10 @@ void launch_projection_ewa_3dgs_fused_fwd_kernel_LN(
                     C,
                     N,
                     means.data_ptr<scalar_t>(),
-                    covars.has_value() ? covars.value().data_ptr<scalar_t>()
-                                       : nullptr,
-                    quats.has_value() ? quats.value().data_ptr<scalar_t>()
-                                      : nullptr,
-                    scales.has_value() ? scales.value().data_ptr<scalar_t>()
-                                       : nullptr,
-                    opacities.has_value() ? opacities.value().data_ptr<scalar_t>()
-                                         : nullptr,
+                    covars.has_value() ? covars.value().data_ptr<scalar_t>() : nullptr,
+                    quats.has_value() ? quats.value().data_ptr<scalar_t>() : nullptr,
+                    scales.has_value() ? scales.value().data_ptr<scalar_t>() : nullptr,
+                    opacities.has_value() ? opacities.value().data_ptr<scalar_t>() : nullptr,
                     viewmats.data_ptr<scalar_t>(),
                     Ks.data_ptr<scalar_t>(),
                     image_width,
@@ -427,13 +433,22 @@ void launch_projection_ewa_3dgs_fused_fwd_kernel_LN(
                     far_plane,
                     radius_clip,
                     camera_model,
+                    // outputs
                     radii.data_ptr<int32_t>(),
                     means2d.data_ptr<scalar_t>(),
                     depths.data_ptr<scalar_t>(),
                     conics.data_ptr<scalar_t>(),
-                    compensations.has_value()
-                        ? compensations.value().data_ptr<scalar_t>()
-                        : nullptr
+                    compensations.has_value() ? compensations.value().data_ptr<scalar_t>() : nullptr,
+                    // outputs for Local Newton
+                    reinterpret_cast<mat3x2*>(jacobians.data_ptr<scalar_t>()),
+                    reinterpret_cast<mat3*>(H_mean_y.data_ptr<scalar_t>()),
+                    reinterpret_cast<mat3*>(H_mean_x.data_ptr<scalar_t>()),
+                    reinterpret_cast<mat2*>(dSigma_dx.data_ptr<scalar_t>()),
+                    reinterpret_cast<mat2*>(dSigma_dy.data_ptr<scalar_t>()),
+                    reinterpret_cast<mat2*>(dSigma_dz.data_ptr<scalar_t>()),
+                    reinterpret_cast<mat2*>(H_Sigma.data_ptr<scalar_t>()),
+                    reinterpret_cast<mat3*>(dr_dp.data_ptr<scalar_t>()),
+                    d2r_dp2_compact.data_ptr<float>()
                 );
         }
     );

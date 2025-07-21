@@ -236,3 +236,91 @@ compute_y_updates_kernel(
   delta_y[g].x = -inv * ( Hyy*gx - Hxy*gy );
   delta_y[g].y = -inv * ( Hxx*gy - Hxy*gx );
 }
+
+
+template <uint32_t CDIM, typename scalar_t>
+void launch_accumulate_y_2nd_order_kernel(
+    const uint32_t C,
+    const uint32_t n_isects,
+    const bool packed,
+    const bool* masks,
+    const uint32_t image_width,
+    const uint32_t image_height,
+    const uint32_t tile_size,
+    const uint32_t tile_width,
+    const uint32_t tile_height,
+    const int32_t* tile_offsets,
+    const int32_t* flatten_ids,
+    const int32_t* last_ids,
+    const scalar_t* dL_dc,
+    const scalar_t* d2L_dc2,
+    const scalar_t* dcdy,
+    const scalar_t* d2cdy2,
+    scalar_t* grad_y,
+    scalar_t* hess_y,
+    size_t shmem_size
+) {
+    // Configure kernel launch
+    dim3 threads = {tile_size, tile_size, 1};
+    dim3 grid = {C, tile_height, tile_width};
+
+    // Set shared memory configuration
+    cudaFuncSetAttribute(
+        accumulate_y_2nd_order_kernel<CDIM, scalar_t>,
+        cudaFuncAttributeMaxDynamicSharedMemorySize,
+        shmem_size
+    );
+
+    // Launch kernel
+    accumulate_y_2nd_order_kernel<CDIM, scalar_t><<<grid, threads, shmem_size, at::cuda::getCurrentCUDAStream()>>>(
+        C,
+        n_isects,
+        packed,
+        masks,
+        image_width,
+        image_height,
+        tile_size,
+        tile_width,
+        tile_height,
+        tile_offsets,
+        flatten_ids,
+        last_ids,
+        dL_dc,
+        d2L_dc2,
+        dcdy,
+        d2cdy2,
+        grad_y,
+        hess_y
+    );
+
+    // Check for errors
+    C10_CUDA_KERNEL_LAUNCH_CHECK();
+}
+
+
+void launch_compute_y_updates_kernel(
+    const uint32_t n_isects,
+    const float* grad_y,
+    const float* hess_y,
+    const bool do_reg,
+    const float lambda,
+    const vec2* yk,
+    vec2* delta_y
+) {
+    // Configure kernel launch
+    const int threads = 256;
+    const int blocks = (n_isects + threads - 1) / threads;
+
+    compute_y_updates_kernel<float><<<blocks, threads, 0, at::cuda::getCurrentCUDAStream()>>>(
+        n_isects,
+        grad_y,
+        hess_y,
+        do_reg,
+        lambda,
+        yk,
+        delta_y
+    );
+
+    // Check for errors
+    C10_CUDA_KERNEL_LAUNCH_CHECK();
+}

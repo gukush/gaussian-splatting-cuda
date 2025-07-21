@@ -99,6 +99,65 @@ __device__ void chain_rule_color_position_kernel(
     color_pos_hess[5] = T1_yz + T2_yz;  // yz
 }
 
+template <typename scalar_t>
+__global__ void chain_rule_color_position_global_kernel(
+    const uint32_t       N,
+    const glm::vec3     *p_k,               // [N,3]
+    const glm::vec3      camera_center,     // broadcast
+    const glm::vec3     *color_dir_grad,    // [N,3]
+    const scalar_t      *color_dir_hess,    // [N,6]
+    glm::vec3           *color_pos_grad,    // [N,3] output
+    scalar_t            *color_pos_hess     // [N,6] output
+) {
+    uint32_t idx = cg::this_grid().thread_rank();
+    if (idx >= N) return;
+
+    // call your device function per‐sample
+    chain_rule_color_position_kernel<scalar_t>(
+        p_k[idx],
+        camera_center,
+        color_dir_grad[idx],
+        color_dir_hess + idx * 6,
+        &color_pos_grad[idx],
+        color_pos_hess + idx * 6
+    );
+}
+
+void launch_chain_rule_color_position_kernel(
+    const at::Tensor& p_k,             // [...,3]
+    const at::Tensor& camera_center,   // [3]
+    const at::Tensor& color_dir_grad,  // [...,3]
+    const at::Tensor& color_dir_hess,  // [...,6]
+    at::Tensor&       color_pos_grad,  // [...,3]
+    at::Tensor&       color_pos_hess   // [...,6]
+) {
+    const uint32_t N = p_k.numel() / 3;
+    if (N == 0) return;
+
+    const int threads = 256;
+    const int blocks  = (N + threads - 1) / threads;
+
+    AT_DISPATCH_FLOATING_TYPES(p_k.scalar_type(),
+        "chain_rule_color_position_global_kernel", [&] {
+        // load camera_center once
+        glm::vec3 cc = *reinterpret_cast<const glm::vec3*>(
+            camera_center.data_ptr<scalar_t>()
+        );
+        chain_rule_color_position_global_kernel<scalar_t><<<
+            blocks, threads, 0, at::cuda::getCurrentCUDAStream()
+        >>>(
+            N,
+            reinterpret_cast<const glm::vec3*>(p_k.data_ptr<scalar_t>()),
+            cc,
+            reinterpret_cast<const glm::vec3*>(color_dir_grad.data_ptr<scalar_t>()),
+            color_dir_hess.data_ptr<scalar_t>(),
+            reinterpret_cast<glm::vec3*>(color_pos_grad.data_ptr<scalar_t>()),
+            color_pos_hess.data_ptr<scalar_t>()
+        );
+    });
+}
+
+
 // Wrapper kernel for batched processing
 template <typename scalar_t>
 __global__ void chain_rule_color_position_batched(
@@ -515,4 +574,74 @@ __device__ void sh_coeffs_to_color_fast_LN(
         H_dir[1] += w * S24_yy * coeffs[24*3 + c];  // Hyy
         H_dir[3] += w * S24_xy * coeffs[24*3 + c];  // Hxy
     }
+}
+
+
+template <typename scalar_t>
+__global__ void spherical_harmonics_LN_kernel(
+    const uint32_t N,
+    const uint32_t K,
+    const uint32_t degrees_to_use,
+    const vec3   *__restrict__ dirs,        // [N, 3]
+    const scalar_t *__restrict__ coeffs,    // [N, K, 3]
+    const scalar_t *__restrict__ v_colors,  // [N, 3]
+    scalar_t       *__restrict__ out_v_coeffs, // [N, K, 3]
+    vec3           *__restrict__ out_v_dir,    // [N, 3]
+    scalar_t       *__restrict__ out_H_dir     // [N, 6]
+) {
+    uint32_t idx = cg::this_grid().thread_rank();
+    if (idx >= N) return;
+
+    // pointers for this sample
+    const vec3    dir         = dirs[idx];
+    const scalar_t* coeffs_ptr = coeffs    + idx * K * 3;
+    const scalar_t* vc_ptr     = v_colors  + idx * 3;
+          scalar_t* vc_out_ptr = out_v_coeffs + idx * K * 3;
+          vec3*     vd_ptr     = out_v_dir    ? &out_v_dir[idx] : nullptr;
+          scalar_t* h_ptr      = out_H_dir    ? out_H_dir + idx * 6 : nullptr;
+
+    // run all 3 channels in one thread
+    for (uint32_t c = 0; c < 3; ++c) {
+        sh_coeffs_to_color_fast_LN<scalar_t>(
+            degrees_to_use,
+            c,
+            dir,
+            coeffs_ptr,
+            vc_ptr,
+            vc_out_ptr,
+            vd_ptr,
+            h_ptr
+        );
+    }
+}
+
+void launch_spherical_harmonics_LN_kernel(
+    const uint32_t      degrees_to_use,
+    const at::Tensor&   dirs,       // [..., 3]
+    const at::Tensor&   coeffs,     // [..., K, 3]
+    const at::Tensor&   v_colors,   // [..., 3]
+    at::Tensor&         v_coeffs,   // [..., K, 3]  (output)
+    at::Tensor&         v_dir,      // [..., 3]     (output)
+    at::Tensor&         H_dir       // [..., 6]     (output)
+) {
+    const uint32_t K = coeffs.size(-2);
+    const uint32_t N = dirs.numel() / 3;
+    if (N == 0) return;
+
+    const int threads = 256;
+    const int blocks  = (N + threads - 1) / threads;
+
+    AT_DISPATCH_FLOATING_TYPES(dirs.scalar_type(), "spherical_harmonics_LN_kernel", [&] {
+        spherical_harmonics_LN_kernel<scalar_t><<<blocks, threads, 0, at::cuda::getCurrentCUDAStream()>>>(
+            N,
+            K,
+            degrees_to_use,
+            reinterpret_cast<const vec3*>(dirs.data_ptr<scalar_t>()),
+            coeffs.data_ptr<scalar_t>(),
+            v_colors.data_ptr<scalar_t>(),
+            v_coeffs.data_ptr<scalar_t>(),
+            reinterpret_cast<vec3*>(v_dir.data_ptr<scalar_t>()),
+            H_dir.data_ptr<scalar_t>()
+        );
+    });
 }

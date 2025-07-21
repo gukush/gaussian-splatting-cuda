@@ -86,38 +86,81 @@ RenderOutput rasterize_newton_step(
     // This kernel computes 2D projections and all first and second order
     // derivatives with respect to 3D position, storing them in the context.
 
-    // We need a tensor to hold the radii, which is a standard output of projection
-    auto radii = torch::zeros({1, N, 2}, torch::TensorOptions().dtype(torch::kInt32).device(torch::kCUDA));
+    // Prepare output tensors for the projection
+    auto means2d = torch::empty({1, N, 2}, means3D.options());
+    auto depths = torch::empty({1, N}, means3D.options());
+    auto conics = torch::empty({1, N, 3}, means3D.options());
+    auto compensations = torch::empty({1, N}, means3D.options());
 
-     const float eps2d = 0.3f;
-        const float near_plane = 0.01f;
-        const float far_plane = 10000.0f;
-        const float radius_clip = 0.0f;
-        const int tile_size = 16;
-        const bool calc_compensations = antialiased;
+    // Prepare tensors for Local Newton derivatives
+    auto jacobians = torch::empty({1, N, 3, 2}, means3D.options());
+    auto H_mean_y = torch::empty({1, N, 3, 3}, means3D.options());
+    auto H_mean_x = torch::empty({1, N, 3, 3}, means3D.options());
+    auto dSigma_dx = torch::empty({1, N, 2, 2}, means3D.options());
+    auto dSigma_dy = torch::empty({1, N, 2, 2}, means3D.options());
+    auto dSigma_dz = torch::empty({1, N, 2, 2}, means3D.options());
+    auto H_Sigma = torch::empty({1, N, 3, 2, 2}, means3D.options()); // Stores 3 2x2 matrices
+    auto dr_dp = torch::empty({1, N, 3, 3}, means3D.options());
+    auto d2r_dp2_compact = torch::empty({1, N, 18}, means3D.options().dtype(torch::kFloat));
 
-        // Step 1: Projection
-        auto proj_settings = torch::tensor({(float)image_width,
-                                            (float)image_height,
-                                            eps2d,
-                                            near_plane,
-                                            far_plane,
-                                            radius_clip,
-                                            scaling_modifier},
-                                           torch::TensorOptions().dtype(torch::kFloat32).device(torch::kCUDA));
+    const float eps2d = 0.3f;
+    const float near_plane = 0.01f;
+    const float far_plane = 10000.0f;
+    const float radius_clip = 0.0f;
+    const bool calc_compensations = antialiased;
 
-
-    gsplat_newton::projection_fwd_with_derivatives(
+    // Call the projection function with all outputs
+    auto projection_outputs = gsplat_newton::projection_ewa_3dgs_fused_fwd_LN(
         means3D,
+        c10::nullopt, // covars (not used since we're using quats+scales)
         rotations,
         scaled_scales,
+        opacities,
         viewmat,
         K,
         image_width,
         image_height,
-        radii,       // The kernel will populate this
-        context      // The kernel will populate all derivative tensors here
+        eps2d,
+        near_plane,
+        far_plane,
+        radius_clip,
+        calc_compensations,
+        gsplat::CameraModelType::PINHOLE // Assuming pinhole camera model
     );
+
+    // Unpack the tuple outputs
+    auto radii = std::get<0>(projection_outputs);
+    means2d = std::get<1>(projection_outputs);
+    depths = std::get<2>(projection_outputs);
+    conics = std::get<3>(projection_outputs);
+    compensations = std::get<4>(projection_outputs);
+    jacobians = std::get<5>(projection_outputs);
+    H_mean_y = std::get<6>(projection_outputs);
+    H_mean_x = std::get<7>(projection_outputs);
+    dSigma_dx = std::get<8>(projection_outputs);
+    dSigma_dy = std::get<9>(projection_outputs);
+    dSigma_dz = std::get<10>(projection_outputs);
+    H_Sigma = std::get<11>(projection_outputs);
+    dr_dp = std::get<12>(projection_outputs);
+    d2r_dp2_compact = std::get<13>(projection_outputs);
+
+    // Store the outputs in the context if needed
+    if (context) {
+        context->radii = radii;
+        context->means2d = means2d;
+        context->depths = depths;
+        context->conics = conics;
+        context->compensations = compensations;
+        context->jacobians = jacobians;
+        context->H_mean_y = H_mean_y;
+        context->H_mean_x = H_mean_x;
+        context->dSigma_dx = dSigma_dx;
+        context->dSigma_dy = dSigma_dy;
+        context->dSigma_dz = dSigma_dz;
+        context->H_Sigma = H_Sigma;
+        context->dr_dp = dr_dp;
+        context->d2r_dp2_compact = d2r_dp2_compact;
+    }
 
     // ========================================================================
     // 3. SPHERICAL HARMONICS WITH DERIVATIVES
@@ -128,7 +171,7 @@ RenderOutput rasterize_newton_step(
     auto shs_for_eval = sh_coeffs.unsqueeze(0); // [1, N, K, 3]
 
     // This kernel computes color and ∂c̃/∂r, ∂²c̃/∂r²
-    auto colors = gsplat_newton::sh_fwd_with_derivatives(
+    auto colors = gsplat_newton::spherica(
         sh_degree,
         context.view_dirs, // Input from projection context
         shs_for_eval,
@@ -163,6 +206,15 @@ RenderOutput rasterize_newton_step(
         final_bg = at::empty({0}, colors.options());
     }
 
+    // Step 4: Apply opacity with compensations
+    torch::Tensor final_opacities;
+    if (calc_compensations && compensations.defined() && compensations.numel() > 0) {
+        final_opacities = opacities.unsqueeze(0) * compensations;
+    } else {
+        final_opacities = opacities.unsqueeze(0);
+    }
+    TORCH_CHECK(final_opacities.is_cuda(), "final_opacities must be on CUDA");
+
     // Tiling and Intersection (standard, no derivatives)
     const int tile_size = 16;
     const int tile_width = (image_width + tile_size - 1) / tile_size;
@@ -174,6 +226,12 @@ RenderOutput rasterize_newton_step(
         true);
     const auto flatten_ids = std::get<2>(isect_results);
     auto isect_offsets = gsplat::intersect_offset(std::get<1>(isect_results), 1, tile_width, tile_height);
+
+
+    TORCH_CHECK(tiles_per_gauss.is_cuda(), "tiles_per_gauss must be on CUDA");
+    TORCH_CHECK(isect_ids.is_cuda(), "isect_ids must be on CUDA");
+    TORCH_CHECK(flatten_ids.is_cuda(), "flatten_ids must be on CUDA");
+    TORCH_CHECK(isect_offsets.is_cuda(), "isect_offsets must be on CUDA");
 
     // Forward Rasterization Kernel
     auto raster_results = gsplat::rasterize_to_pixels_3dgs_fwd(

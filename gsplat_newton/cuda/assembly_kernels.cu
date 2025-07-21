@@ -376,7 +376,7 @@ __global__ void assemble_newton_derivatives_kernel(
     // OUTPUTS:
     vec2 *__restrict__ d_c_vk,
     mat2 *__restrict__ H_c_vk,
-    vec3 *__restrict__ dc_dlambda,
+    vec2 *__restrict__ dc_dlambda,
     mat3 *__restrict__ d2c_dlambda2,
     float *__restrict__   dc_dtheta,
     float *__restrict__   d2c_dtheta2,
@@ -576,4 +576,98 @@ __global__ void assemble_newton_derivatives_kernel(
         dc_dcolor   [idx3] = grad_c;
         d2c_dcolor2 [idx3] = hess_c;
     }
+}
+
+
+
+void launch_assemble_newton_derivatives_kernel(
+    const int num_gaussians,
+    const torch::Tensor& dc_dcSH_totals,
+    const torch::Tensor& dc_dG_totals,
+    const torch::Tensor& dG_dmean2d_totals,
+    const torch::Tensor& dG_dSigma_totals,
+    const torch::Tensor& H_G_mean2d_totals,
+    const torch::Tensor& H_G_sigma_totals,
+    const torch::Tensor& H_G_mixed_totals,
+    const torch::Tensor& dc_dG_opacity_totals,
+    const torch::Tensor& dG_dSigma_opacity_totals,
+    const torch::Tensor& H_G_sigma_opacity_totals,
+    torch::Tensor& dc_dopacity,
+    torch::Tensor& d2c_dopacity2,
+    const torch::Tensor& jacobians,
+    const torch::Tensor& dSigma_dpx,
+    const torch::Tensor& dSigma_dpy,
+    const torch::Tensor& dSigma_dpz,
+    const torch::Tensor& dc_sh_dp,
+    const torch::Tensor& H_pi_px,
+    const torch::Tensor& H_pi_py,
+    const torch::Tensor& H_c_sh_p,
+    const torch::Tensor& H_Sigma_pxx,
+    const torch::Tensor& H_Sigma_pxy,
+    const torch::Tensor& H_Sigma_pyy,
+    const torch::Tensor& dSigma_dtheta_inputs,
+    const torch::Tensor& d2Sigma_dtheta2_inputs,
+    const torch::Tensor& T_matrices,
+    const torch::Tensor& conics_2d,
+    const torch::Tensor& p_k,
+    const torch::Tensor& camera_pos,
+    torch::Tensor& d_c_vk,
+    torch::Tensor& H_c_vk,
+    torch::Tensor& dc_dlambda,
+    torch::Tensor& d2c_dlambda2,
+    torch::Tensor& dc_dtheta,
+    torch::Tensor& d2c_dtheta2,
+    torch::Tensor& dc_dcolor,
+    torch::Tensor& dc_dsigma
+) {
+    // Configure kernel launch
+    const int threads = 256;
+    const int blocks = (num_gaussians + threads - 1) / threads;
+
+    // Get pointers to tensor data
+    auto camera_pos_ptr = reinterpret_cast<const vec3*>(camera_pos.data_ptr<float>());
+
+    assemble_newton_derivatives_kernel<<<blocks, threads, 0, at::cuda::getCurrentCUDAStream()>>>(
+        num_gaussians,
+        dc_dcSH_totals.data_ptr<float>(),
+        dc_dG_totals.data_ptr<float>(),
+        reinterpret_cast<const vec2*>(dG_dmean2d_totals.data_ptr<float>()),
+        reinterpret_cast<const vec3*>(dG_dSigma_totals.data_ptr<float>()),
+        reinterpret_cast<const vec3*>(H_G_mean2d_totals.data_ptr<float>()),
+        H_G_sigma_totals.data_ptr<float>(),
+        H_G_mixed_totals.data_ptr<float>(),
+        dc_dG_opacity_totals.data_ptr<float>(),
+        reinterpret_cast<const vec3*>(dG_dSigma_opacity_totals.data_ptr<float>()),
+        H_G_sigma_opacity_totals.data_ptr<float>(),
+        dc_dopacity.data_ptr<float>(),
+        d2c_dopacity2.data_ptr<float>(),
+        reinterpret_cast<const mat2x3*>(jacobians.data_ptr<float>()),
+        reinterpret_cast<const mat2*>(dSigma_dpx.data_ptr<float>()),
+        reinterpret_cast<const mat2*>(dSigma_dpy.data_ptr<float>()),
+        reinterpret_cast<const mat2*>(dSigma_dpz.data_ptr<float>()),
+        reinterpret_cast<const mat3*>(dc_sh_dp.data_ptr<float>()),
+        reinterpret_cast<const mat3*>(H_pi_px.data_ptr<float>()),
+        reinterpret_cast<const mat3*>(H_pi_py.data_ptr<float>()),
+        reinterpret_cast<const mat3*>(H_c_sh_p.data_ptr<float>()),
+        reinterpret_cast<const mat3*>(H_Sigma_pxx.data_ptr<float>()),
+        reinterpret_cast<const mat3*>(H_Sigma_pxy.data_ptr<float>()),
+        reinterpret_cast<const mat3*>(H_Sigma_pyy.data_ptr<float>()),
+        reinterpret_cast<const mat2*>(dSigma_dtheta_inputs.data_ptr<float>()),
+        reinterpret_cast<const mat2*>(d2Sigma_dtheta2_inputs.data_ptr<float>()),
+        reinterpret_cast<const mat2x3*>(T_matrices.data_ptr<float>()),
+        reinterpret_cast<const vec3*>(conics_2d.data_ptr<float>()),
+        reinterpret_cast<const vec3*>(p_k.data_ptr<float>()),
+        *camera_pos_ptr,
+        reinterpret_cast<vec2*>(d_c_vk.data_ptr<float>()),
+        reinterpret_cast<mat2*>(H_c_vk.data_ptr<float>()),
+        reinterpret_cast<vec2*>(dc_dlambda.data_ptr<float>()),
+        reinterpret_cast<mat2*>(d2c_dlambda2.data_ptr<float>()),
+        dc_dtheta.data_ptr<float>(),
+        d2c_dtheta2.data_ptr<float>(),
+        dc_dcolor.data_ptr<float>(),
+        dc_dsigma.data_ptr<float>()
+    );
+
+    // Check for kernel launch errors
+    C10_CUDA_KERNEL_LAUNCH_CHECK();
 }

@@ -351,12 +351,18 @@ __global__ void fusedssim_color_backwardCUDA_LN(
 
         // 5) second derivative ∂²f/∂I1²  (eq 13)
         //    we only show the g0^2 and g1^2 terms; you must add the g2^2 and g3^2 terms
+        float g2_num = (2.0f * f2 * f3 * g2 + f2 * f2 * g3) * f0 * f1;
+        float g2_den = (f2 * f2 * f3) * (f2 * f2 * f3);
+        float g3_num = (2.0f * f2 * f3 * g3 + f3 * f3 * g2) * f0 * f1;
+        float g3_den = (f2 * f3 * f3) * (f2 * f3 * f3);
         float d2f =
            /* from g0^2 term */
            ( ( g1/(f2*f3)   -  ((f2*g3+f3*g2)/(f2*f2*f3*f3))*f1 ) * g0*g0 )
          + /* from g1^2 term */
            ( ( g0/(f2*f3)   -  ((f2*g3+f3*g2)/(f2*f2*f3*f3))*f0 ) * g1*g1 )
          /* + analogous terms for g2^2 and g3^2 from eq (13) */
+         + ( (-(f0 * g1 + f1 * g0) / (f2 * f2 * f3)) + (g2_num / g2_den) ) * g2 * g2;
+         + ( (-(f0 * g1 + f1 * g0) / (f2 * f3 * f3)) + (g3_num / g3_den) ) * g3 * g3
          ;
 
         // 6) accumulate, remember the outer averaging factor 1/(3·|I|)
