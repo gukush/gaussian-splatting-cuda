@@ -4,17 +4,12 @@
 #include <c10/cuda/CUDAStream.h>
 #include <cooperative_groups.h>
 
-#include "gsplat/Common.h"
-#include "gsplat/Rasterization.h"
-#include "gsplat/Utils.cuh"
-
-
 #include "Common.h"
 #include "Rasterization.h"
 #include "Utils.cuh"
-#include <cooperative_groups.h>
 
 namespace cg = cooperative_groups;
+using namespace gsplat;
 
 /**
  * @brief Performs an analytical eigenvalue decomposition for a 2x2 symmetric matrix.
@@ -95,36 +90,33 @@ compute_dc_dpk_local(
     vec3 grad = {0.f, 0.f, 0.f};
 
     // Term 1: (∂c/∂c̃ₖ) * (∂c̃ₖ/∂pₖ)
-    // Since c is scalar (sum of RGB diff), and c_sh is vector, we take the sum.
-    // Assuming dc_sh_dp is pre-multiplied by color vector if needed.
-    // For simplicity here, we assume a scalar dc_dc_sh affects all components.
-    grad.x += dc_dc_sh * (dc_sh_dp.data[0][0] + dc_sh_dp.data[1][0] + dc_sh_dp.data[2][0]);
-    grad.y += dc_dc_sh * (dc_sh_dp.data[0][1] + dc_sh_dp.data[1][1] + dc_sh_dp.data[2][1]);
-    grad.z += dc_dc_sh * (dc_sh_dp.data[0][2] + dc_sh_dp.data[1][2] + dc_sh_dp.data[2][2]);
+    // The original code sums the columns.
+    // dc_sh_dp.data[0][0] + dc_sh_dp.data[1][0] + dc_sh_dp.data[2][0] is the sum of column 0.
+    // In GLM, this is dc_sh_dp[0][0] + dc_sh_dp[0][1] + dc_sh_dp[0][2].
+    grad.x += dc_dc_sh * (dc_sh_dp[0][0] + dc_sh_dp[0][1] + dc_sh_dp[0][2]); // Sum of column 0
+    grad.y += dc_dc_sh * (dc_sh_dp[1][0] + dc_sh_dp[1][1] + dc_sh_dp[1][2]); // Sum of column 1
+    grad.z += dc_dc_sh * (dc_sh_dp[2][0] + dc_sh_dp[2][1] + dc_sh_dp[2][2]); // Sum of column 2
 
     // Term 2: (∂c/∂Gₖ) * [ (∂Gₖ/∂πₖ) * (∂πₖ/∂pₖ) + (∂Gₖ/∂Σₖ) : (∂Σₖ/∂pₖ) ]
     if (abs(dc_dG) > 1e-7) {
         // (∂Gₖ/∂πₖ) * (∂πₖ/∂pₖ) -> vec2 * mat2x3 = vec3
-        grad.x += dc_dG * (dG_dmean2d.x * J.data[0][0] + dG_dmean2d.y * J.data[1][0]);
-        grad.y += dc_dG * (dG_dmean2d.x * J.data[0][1] + dG_dmean2d.y * J.data[1][1]);
-        grad.z += dc_dG * (dG_dmean2d.x * J.data[0][2] + dG_dmean2d.y * J.data[1][2]);
+        // J.data[row][col] becomes J[col][row]
+        grad.x += dc_dG * (dG_dmean2d.x * J[0][0] + dG_dmean2d.y * J[0][1]);
+        grad.y += dc_dG * (dG_dmean2d.x * J[1][0] + dG_dmean2d.y * J[1][1]);
+        grad.z += dc_dG * (dG_dmean2d.x * J[2][0] + dG_dmean2d.y * J[2][1]);
 
         // (∂Gₖ/∂Σₖ) : (∂Σₖ/∂pₖ) -> Frobenius inner product
-        // dG_dSigma is {dG/dΣxx, dG/dΣxy, dG/dΣyy}
-        // dSigma is { {Σxx, Σxy}, {Σyx, Σyy} }
-        // Product is dG/dΣxx*Σxx + dG/dΣxy*Σxy + dG/dΣyx*Σyx + dG/dΣyy*Σyy
-        // Since Σ is symmetric (Σxy=Σyx) and dG/dΣ is also symmetric, this becomes:
-        // dG/dΣxx*Σxx + 2*dG/dΣxy*Σxy + dG/dΣyy*Σyy
-        float dG_S_dp_x = dG_dSigma.x * dSigma_dpx.data[0][0] + 2.f * dG_dSigma.y * dSigma_dpx.data[0][1] + dG_dSigma.z * dSigma_dpx.data[1][1];
-        float dG_S_dp_y = dG_dSigma.x * dSigma_dpy.data[0][0] + 2.f * dG_dSigma.y * dSigma_dpy.data[0][1] + dG_dSigma.z * dSigma_dpy.data[1][1];
-        float dG_S_dp_z = dG_dSigma.x * dSigma_dpz.data[0][0] + 2.f * dG_dSigma.y * dSigma_dpz.data[0][1] + dG_dSigma.z * dSigma_dpz.data[1][1];
+        // dSigma_dpx.data[row][col] becomes dSigma_dpx[col][row]
+        float dG_S_dp_x = dG_dSigma.x * dSigma_dpx[0][0] + 2.f * dG_dSigma.y * dSigma_dpx[1][0] + dG_dSigma.z * dSigma_dpx[1][1];
+        float dG_S_dp_y = dG_dSigma.x * dSigma_dpy[0][0] + 2.f * dG_dSigma.y * dSigma_dpy[1][0] + dG_dSigma.z * dSigma_dpy[1][1];
+        float dG_S_dp_z = dG_dSigma.x * dSigma_dpz[0][0] + 2.f * dG_dSigma.y * dSigma_dpz[1][0] + dG_dSigma.z * dSigma_dpz[1][1];
+
         grad.x += dc_dG * dG_S_dp_x;
         grad.y += dc_dG * dG_S_dp_y;
         grad.z += dc_dG * dG_S_dp_z;
     }
     return grad;
 }
-
 
 /**
  * @brief Computes the second derivative ∂²c/∂pₖ² for a single pixel's contribution.
@@ -145,58 +137,40 @@ compute_d2c_dpk2_local(
     const mat2 dSigma_dpx, const mat2 dSigma_dpy, const mat2 dSigma_dpz
 )
 {
-    mat3 H = {{{0.f,0.f,0.f}, {0.f,0.f,0.f}, {0.f,0.f,0.f}}};
+    // Initialize a zero matrix using the standard GLM constructor
+    mat3 H(0.0f);
 
     // Term 1: (∂c/∂c̃ₖ) ⋅ (∂²c̃ₖ/∂pₖ²)
-    for(int i = 0; i < 3; ++i)
-        for(int j = 0; j < 3; ++j)
-            H.data[i][j] += dc_dc_sh * H_c_sh_p.data[i][j];
+    H += dc_dc_sh * H_c_sh_p;
 
     // Term 2: (∂c/∂Gₖ) ⋅ [ (∂Gₖ/∂πₖ)⋅(∂²πₖ/∂pₖ²) + (∂Gₖ/∂Σₖ):(∂²Σₖ/∂pₖ²) ]
     if (fabsf(dc_dG) > 1e-7f) {
-        for(int i=0; i<3; i++) {
-            for(int j=0; j<3; j++) {
-                H.data[i][j] += dc_dG * (dG_dmean2d.x * H_pi_px.data[i][j] +
-                                       dG_dmean2d.y * H_pi_py.data[i][j]);
-
-                H.data[i][j] += dc_dG * (dG_dSigma.x * H_Sigma_pxx.data[i][j] +
-                                       2.f * dG_dSigma.y * H_Sigma_pxy.data[i][j] +
-                                       dG_dSigma.z * H_Sigma_pyy.data[i][j]);
-            }
-        }
+        // Replaced loops with direct matrix operations
+        H += dc_dG * (dG_dmean2d.x * H_pi_px + dG_dmean2d.y * H_pi_py);
+        H += dc_dG * (dG_dSigma.x * H_Sigma_pxx + 2.f * dG_dSigma.y * H_Sigma_pxy + dG_dSigma.z * H_Sigma_pyy);
     }
 
     // Term 3: (∂πₖ/∂pₖ)ᵀ (∂²Gₖ/∂πₖ²) (∂πₖ/∂pₖ)
-    mat2 H_G_pi = {{H_G_mean2d.x, H_G_mean2d.y}, {H_G_mean2d.y, H_G_mean2d.z}};
-    for(int i=0; i<3; i++) {
-        for(int j=0; j<3; j++) {
-            float val = 0;
-            for(int a=0; a<2; a++) {
-                for(int b=0; b<2; b++) {
-                    val += J.data[a][i] * H_G_pi.data[a][b] * J.data[b][j];
-                }
-            }
-            H.data[i][j] += val;
-        }
-    }
+    // Construct H_G_pi with column vectors as per GLM convention
+    mat2 H_G_pi(vec2(H_G_mean2d.x, H_G_mean2d.y), vec2(H_G_mean2d.y, H_G_mean2d.z));
+    // Replaced loops with direct matrix multiplication
+    H += glm::transpose(J) * H_G_pi * J;
 
     // Term 4: (∂Σₖ/∂pₖ)ᵀ : (∂²Gₖ/∂Σₖ²) : (∂Σₖ/∂pₖ)
     {
         const mat2 dS_dp[3] = {dSigma_dpx, dSigma_dpy, dSigma_dpz};
-        // Compute the full 3x3 Hessian by iterating through i and j for p_i and p_j
         for (int i = 0; i < 3; i++) {
             for (int j = i; j < 3; j++) { // Compute lower triangle + diagonal
                 const mat2& dS_i = dS_dp[i];
                 const mat2& dS_j = dS_dp[j];
 
-                // Full tensor contraction: dS_i : H_G_sigma : dS_j
-                // H_G_sigma is {H_xxxx, H_yyyy, H_xyxy, H_xxxy, H_yyxy, H_xxyy}
+                // Full tensor contraction with corrected [col][row] access
                 const float val =
-                    dS_i.data[0][0] * (H_G_sigma[0] * dS_j.data[0][0] + H_G_sigma[5] * dS_j.data[1][1] + 2.f*H_G_sigma[3] * dS_j.data[0][1]) +
-                    dS_i.data[1][1] * (H_G_sigma[5] * dS_j.data[0][0] + H_G_sigma[1] * dS_j.data[1][1] + 2.f*H_G_sigma[4] * dS_j.data[0][1]) +
-                    2.f * dS_i.data[0][1] * (H_G_sigma[3] * dS_j.data[0][0] + H_G_sigma[4] * dS_j.data[1][1] + 2.f*H_G_sigma[2] * dS_j.data[0][1]);
+                    dS_i[0][0] * (H_G_sigma[0] * dS_j[0][0] + H_G_sigma[5] * dS_j[1][1] + 2.f*H_G_sigma[3] * dS_j[1][0]) +
+                    dS_i[1][1] * (H_G_sigma[5] * dS_j[0][0] + H_G_sigma[1] * dS_j[1][1] + 2.f*H_G_sigma[4] * dS_j[1][0]) +
+                    2.f * dS_i[1][0] * (H_G_sigma[3] * dS_j[0][0] + H_G_sigma[4] * dS_j[1][1] + 2.f*H_G_sigma[2] * dS_j[1][0]);
 
-                H.data[i][j] += val;
+                H[j][i] += val; // H[col][row]
             }
         }
     }
@@ -204,30 +178,30 @@ compute_d2c_dpk2_local(
     // Term 5: 2 * (∂Σₖ/∂pₖ)ᵀ : (∂²Gₖ/∂πₖ∂Σₖ) : (∂πₖ/∂pₖ)
     {
         const mat2 dS_dp[3] = {dSigma_dpx, dSigma_dpy, dSigma_dpz};
-        // Compute the full 3x3 Hessian
-        for (int i = 0; i < 3; i++) { // Corresponds to ∂Σ/∂pᵢ
-            for (int j = 0; j < 3; j++) { // Corresponds to ∂π/∂pⱼ
+        for (int i = 0; i < 3; i++) {
+            for (int j = 0; j < 3; j++) {
                 const mat2& dS_i = dS_dp[i];
                 // H_G_mixed is {H_πxΣxx, H_πxΣxy, H_πxΣyy, H_πyΣxx, H_πyΣxy, H_πyΣyy}
-                const float term_pi_x = dS_i.data[0][0]*H_G_mixed[0] + 2.f*dS_i.data[0][1]*H_G_mixed[1] + dS_i.data[1][1]*H_G_mixed[2];
-                const float term_pi_y = dS_i.data[0][0]*H_G_mixed[3] + 2.f*dS_i.data[0][1]*H_G_mixed[4] + dS_i.data[1][1]*H_G_mixed[5];
+                // Corrected dS_i access to [col][row]
+                const float term_pi_x = dS_i[0][0]*H_G_mixed[0] + 2.f*dS_i[1][0]*H_G_mixed[1] + dS_i[1][1]*H_G_mixed[2];
+                const float term_pi_y = dS_i[0][0]*H_G_mixed[3] + 2.f*dS_i[1][0]*H_G_mixed[4] + dS_i[1][1]*H_G_mixed[5];
 
-                const float val = term_pi_x * J.data[0][j] + term_pi_y * J.data[1][j];
+                // Corrected J access to [col][row]
+                const float val = term_pi_x * J[j][0] + term_pi_y * J[j][1];
 
-                // Note: This term is not necessarily symmetric, so we compute the full matrix
-                H.data[i][j] += 2.0f * val;
+                H[j][i] += 2.0f * val; // H[col][row]
             }
         }
     }
 
     // Symmetrize the Hessian
-    H.data[0][1] = H.data[1][0];
-    H.data[0][2] = H.data[2][0];
-    H.data[1][2] = H.data[2][1];
+    // This correctly copies the lower triangle to the upper triangle
+    H[0][1] = H[1][0];
+    H[0][2] = H[2][0];
+    H[1][2] = H[2][1];
 
     return H;
 }
-
 
 // Complete scaling Hessian computation
 __device__ __forceinline__ void compute_scaling_hessian(
@@ -286,21 +260,20 @@ __device__ __forceinline__ void compute_rotation_derivatives(
     float& out_hessian
 ) {
     // --- First Derivative: ∂c/∂θₖ ---
-    // This is the Frobenius inner product: (∂c/∂Gₖ) * (∂Gₖ/∂Σₖ) : (∂Σₖ/∂θₖ)
-    // We use the total summed derivatives from Kernel 1.
-    float grad_term = dG_dSigma.x * dSigma_dtheta.data[0][0] +
-                      2.f * dG_dSigma.y * dSigma_dtheta.data[0][1] +
-                      dG_dSigma.z * dSigma_dtheta.data[1][1];
-    out_grad = dc_dG * grad_term; // Assuming Gauss-Newton style approximation from paper
+    // Corrected matrix access to [col][row]
+    float grad_term = dG_dSigma.x * dSigma_dtheta[0][0] +
+                      2.f * dG_dSigma.y * dSigma_dtheta[1][0] +
+                      dG_dSigma.z * dSigma_dtheta[1][1];
+    out_grad = dc_dG * grad_term;
 
     // --- Second Derivative: ∂²c/∂θₖ² ---
     out_hessian = 0.f;
 
     // Term 1: (∂c/∂Gₖ) * [ (∂Σₖ/∂θₖ)ᵀ : (∂²Gₖ/∂Σₖ²) : (∂Σₖ/∂θₖ) ]
-    // This is a quadratic form contraction.
-    const float dS_xx = dSigma_dtheta.data[0][0];
-    const float dS_yy = dSigma_dtheta.data[1][1];
-    const float dS_xy = dSigma_dtheta.data[0][1];
+    // Corrected matrix access to [col][row]
+    const float dS_xx = dSigma_dtheta[0][0];
+    const float dS_yy = dSigma_dtheta[1][1];
+    const float dS_xy = dSigma_dtheta[1][0];
 
     // H_G_sigma layout: {H_xxxx, H_yyyy, H_xyxy, H_xxxy, H_yyxy, H_xxyy}
     const float hess_term1 =
@@ -309,15 +282,16 @@ __device__ __forceinline__ void compute_rotation_derivatives(
         2.f * dS_xy * (H_G_sigma[3] * dS_xx + H_G_sigma[4] * dS_yy + 2.f*H_G_sigma[2] * dS_xy);
 
     // Term 2: (∂c/∂Gₖ) * [ (∂Gₖ/∂Σₖ) : (∂²Σₖ/∂θₖ²) ]
-    const float hess_term2 = dG_dSigma.x * d2Sigma_dtheta2.data[0][0] +
-                             2.f * dG_dSigma.y * d2Sigma_dtheta2.data[0][1] +
-                             dG_dSigma.z * d2Sigma_dtheta2.data[1][1];
+    // Corrected matrix access to [col][row]
+    const float hess_term2 = dG_dSigma.x * d2Sigma_dtheta2[0][0] +
+                             2.f * dG_dSigma.y * d2Sigma_dtheta2[1][0] +
+                             dG_dSigma.z * d2Sigma_dtheta2[1][1];
 
     out_hessian = dc_dG * (hess_term1 + hess_term2);
 }
 
 // Include the file with the helper functions (mat2x3, mat3, compute_..._totals, etc.)
-#include "NewtonHelpers.cu"
+//#include "NewtonHelpers.cu"
 
 /**
  * @brief Assembles the final first and second order derivatives w.r.t. pₖ.
@@ -381,7 +355,7 @@ __global__ void assemble_newton_derivatives_kernel(
     float *__restrict__   dc_dtheta,
     float *__restrict__   d2c_dtheta2,
     float *__restrict__  dc_dcolor,
-    float* *__restrict__ dc_dsigma
+    float *__restrict__ dc_dsigma
 ) {
     const int g_idx = blockIdx.x * blockDim.x + threadIdx.x;
     if (g_idx >= num_gaussians) return;
@@ -439,36 +413,27 @@ __global__ void assemble_newton_derivatives_kernel(
     //const mat2 V = eigenvectors_2d[g_idx];
     const mat2x3 T_k = T_matrices[g_idx];
 
-    // Compute ∂Σₖ/∂λₖ
+       // Compute ∂Σₖ/∂λₖ using the outer product, which is the idiomatic GLM approach.
+    // The derivative ∂Σ/∂λᵢ is the outer product vᵢvᵢᵀ.
     mat2 dSigma_dlambda[2];
-    dSigma_dlambda[0] = { // dΣ/dλ_min
-        { V.data[0][0]*V.data[0][0], V.data[0][0]*V.data[1][0] },
-        { V.data[1][0]*V.data[0][0], V.data[1][0]*V.data[1][0] }
-    };
-    dSigma_dlambda[1] = { // dΣ/dλ_max
-        { V.data[0][1]*V.data[0][1], V.data[0][1]*V.data[1][1] },
-        { V.data[1][1]*V.data[0][1], V.data[1][1]*V.data[1][1] }
-    };
+    dSigma_dlambda[0] = glm::outerProduct(V[0], V[0]); // Using v_min (1st col of V)
+    dSigma_dlambda[1] = glm::outerProduct(V[1], V[1]); // Using v_max (2nd col of V)
 
     // Compute ∂Σₖ/∂sₖ
     mat2 dSigma_dsk[3];
     for (int i=0; i<3; ++i) {
-        dSigma_dsk[i].data[0][0] = dSigma_dlambda[0].data[0][0]*T_k.data[0][i] +
-                                  dSigma_dlambda[1].data[0][0]*T_k.data[1][i];
-        dSigma_dsk[i].data[0][1] = dSigma_dlambda[0].data[0][1]*T_k.data[0][i] +
-                                  dSigma_dlambda[1].data[0][1]*T_k.data[1][i];
-        dSigma_dsk[i].data[1][0] = dSigma_dlambda[0].data[1][0]*T_k.data[0][i] +
-                                  dSigma_dlambda[1].data[1][0]*T_k.data[1][i];
-        dSigma_dsk[i].data[1][1] = dSigma_dlambda[0].data[1][1]*T_k.data[0][i] +
-                                  dSigma_dlambda[1].data[1][1]*T_k.data[1][i];
+        // Replaced element-wise assignment with direct matrix arithmetic.
+        // T_k is mat2x3, so T_k[i] is a vec2 (column i).
+        dSigma_dsk[i] = dSigma_dlambda[0] * T_k[i][0] + dSigma_dlambda[1] * T_k[i][1];
     }
 
     // Compute gradient ∂c/∂sₖ
-    vec3 grad_s = {0.f, 0.f, 0.f};
+    vec3 grad_s(0.0f);
     for(int i=0; i<3; ++i) {
-        grad_s.data[i] = dG_dSigma.x * dSigma_dsk[i].data[0][0] +
-                        2.f * dG_dSigma.y * dSigma_dsk[i].data[0][1] +
-                        dG_dSigma.z * dSigma_dsk[i].data[1][1];
+        // Corrected access for grad_s vector and dSigma_dsk matrix [col][row]
+        grad_s[i] = dG_dSigma.x * dSigma_dsk[i][0][0] +
+                    2.f * dG_dSigma.y * dSigma_dsk[i][1][0] +
+                    dG_dSigma.z * dSigma_dsk[i][1][1];
     }
 
     //dc_dsk[g_idx] = grad_s;
@@ -581,43 +546,43 @@ __global__ void assemble_newton_derivatives_kernel(
 
 void launch_assemble_newton_derivatives_kernel(
     const int num_gaussians,
-    const torch::Tensor& dc_dcSH_totals,
-    const torch::Tensor& dc_dG_totals,
-    const torch::Tensor& dG_dmean2d_totals,
-    const torch::Tensor& dG_dSigma_totals,
-    const torch::Tensor& H_G_mean2d_totals,
-    const torch::Tensor& H_G_sigma_totals,
-    const torch::Tensor& H_G_mixed_totals,
-    const torch::Tensor& dc_dG_opacity_totals,
-    const torch::Tensor& dG_dSigma_opacity_totals,
-    const torch::Tensor& H_G_sigma_opacity_totals,
-    torch::Tensor& dc_dopacity,
-    torch::Tensor& d2c_dopacity2,
-    const torch::Tensor& jacobians,
-    const torch::Tensor& dSigma_dpx,
-    const torch::Tensor& dSigma_dpy,
-    const torch::Tensor& dSigma_dpz,
-    const torch::Tensor& dc_sh_dp,
-    const torch::Tensor& H_pi_px,
-    const torch::Tensor& H_pi_py,
-    const torch::Tensor& H_c_sh_p,
-    const torch::Tensor& H_Sigma_pxx,
-    const torch::Tensor& H_Sigma_pxy,
-    const torch::Tensor& H_Sigma_pyy,
-    const torch::Tensor& dSigma_dtheta_inputs,
-    const torch::Tensor& d2Sigma_dtheta2_inputs,
-    const torch::Tensor& T_matrices,
-    const torch::Tensor& conics_2d,
-    const torch::Tensor& p_k,
-    const torch::Tensor& camera_pos,
-    torch::Tensor& d_c_vk,
-    torch::Tensor& H_c_vk,
-    torch::Tensor& dc_dlambda,
-    torch::Tensor& d2c_dlambda2,
-    torch::Tensor& dc_dtheta,
-    torch::Tensor& d2c_dtheta2,
-    torch::Tensor& dc_dcolor,
-    torch::Tensor& dc_dsigma
+    const at::Tensor& dc_dcSH_totals,
+    const at::Tensor& dc_dG_totals,
+    const at::Tensor& dG_dmean2d_totals,
+    const at::Tensor& dG_dSigma_totals,
+    const at::Tensor& H_G_mean2d_totals,
+    const at::Tensor& H_G_sigma_totals,
+    const at::Tensor& H_G_mixed_totals,
+    const at::Tensor& dc_dG_opacity_totals,
+    const at::Tensor& dG_dSigma_opacity_totals,
+    const at::Tensor& H_G_sigma_opacity_totals,
+    at::Tensor& dc_dopacity,
+    at::Tensor& d2c_dopacity2,
+    const at::Tensor& jacobians,
+    const at::Tensor& dSigma_dpx,
+    const at::Tensor& dSigma_dpy,
+    const at::Tensor& dSigma_dpz,
+    const at::Tensor& dc_sh_dp,
+    const at::Tensor& H_pi_px,
+    const at::Tensor& H_pi_py,
+    const at::Tensor& H_c_sh_p,
+    const at::Tensor& H_Sigma_pxx,
+    const at::Tensor& H_Sigma_pxy,
+    const at::Tensor& H_Sigma_pyy,
+    const at::Tensor& dSigma_dtheta_inputs,
+    const at::Tensor& d2Sigma_dtheta2_inputs,
+    const at::Tensor& T_matrices,
+    const at::Tensor& conics_2d,
+    const at::Tensor& p_k,
+    const at::Tensor& camera_pos,
+    at::Tensor& d_c_vk,
+    at::Tensor& H_c_vk,
+    at::Tensor& dc_dlambda,
+    at::Tensor& d2c_dlambda2,
+    at::Tensor& dc_dtheta,
+    at::Tensor& d2c_dtheta2,
+    at::Tensor& dc_dcolor,
+    at::Tensor& dc_dsigma
 ) {
     // Configure kernel launch
     const int threads = 256;
@@ -660,7 +625,7 @@ void launch_assemble_newton_derivatives_kernel(
         reinterpret_cast<vec2*>(d_c_vk.data_ptr<float>()),
         reinterpret_cast<mat2*>(H_c_vk.data_ptr<float>()),
         reinterpret_cast<vec2*>(dc_dlambda.data_ptr<float>()),
-        reinterpret_cast<mat2*>(d2c_dlambda2.data_ptr<float>()),
+        reinterpret_cast<mat3*>(d2c_dlambda2.data_ptr<float>()),
         dc_dtheta.data_ptr<float>(),
         d2c_dtheta2.data_ptr<float>(),
         dc_dcolor.data_ptr<float>(),

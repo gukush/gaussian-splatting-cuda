@@ -11,7 +11,7 @@ struct LocalNewtonContext {
     torch::Tensor conics;        // [C, N, 3] - Inverse 2D covariance matrices
     torch::Tensor depths;        // [C, N]    - Z-depths in camera space
     torch::Tensor view_dirs;     // [C, N, 3] - View directions from camera to mean
-
+    torch::Tensor radii;
     // ==================================
     // PROJECTION DERIVATIVES (w.r.t. 3D position p_k)
     // ==================================
@@ -25,7 +25,7 @@ struct LocalNewtonContext {
 
     // For SH View Direction (r_k)
     torch::Tensor d_r_dp;        // [C, N, 3, 3] - Jacobian ∂r/∂p
-    torch::Tensor H_r_dp;        // [C, N, 3, 3, 3] - Hessian ∂²r/∂p² (or compacted)
+    torch::Tensor H_r_dp;        // [C, N, 18?] - Hessian ∂²r/∂p² (or compacted)
 
     // ==================================
     // RASTERIZATION BACKWARD AGGREGATES
@@ -38,7 +38,7 @@ struct LocalNewtonContext {
     torch::Tensor H_G_mean2d;    // [C, N, 3] - Σ(∂²G/∂π²)
     torch::Tensor H_G_Sigma;     // [C, N, 6] - Σ(∂²G/∂Σ²)
     torch::Tensor H_G_mixed;     // [C, N, 6] - Σ(∂²G/∂π∂Σ)
-
+    torch::Tensor dc_dcSH;
     // ==================================
     // SH DERIVATIVES (w.r.t. 3D position p_k)
     // ==================================
@@ -52,8 +52,8 @@ struct LocalNewtonContext {
     torch::Tensor dirs;
     torch::Tensor coeffs;
     torch::Tensor masks;
-    torch::Tensor sh_degree;
-    torch::Tensor num_bases;
+    int sh_degree;
+    int num_bases;
     // ==================================
     // ROTATION & SCALING DERIVATIVES
     // ==================================

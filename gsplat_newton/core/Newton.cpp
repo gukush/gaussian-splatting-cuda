@@ -1,14 +1,15 @@
-#include "Newton.h"
+#include "gsplat_newton/Newton.h"
 #include "Common.h"
-#include "core/kernels.hpp" // User's wrappers
-#include "utils/cuda_utils.cuh"
+#include "gsplat_newton/kernels.hpp" // User's wrappers
+//#include "utils/cuda_utils.cuh"
 #include <ATen/TensorUtils.h>
 #include <c10/cuda/CUDAGuard.h>
+#include "core/splat_data.hpp"
 
 namespace gsplat {
 
 void local_newton_backward(
-    const gsplat_newton::LocalNewtonContext& context,
+    const LocalNewtonContext& context,
     SplatData& gaussian_model,
     uint32_t image_width,
     uint32_t image_height

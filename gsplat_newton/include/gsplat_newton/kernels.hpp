@@ -1,8 +1,10 @@
 #pragma once
-
-#include "core/local_newton_context.hpp" // Your main context struct
+#include "gsplat_newton/local_newton_context.hpp" // Your main context struct
+#include "core/splat_data.hpp"
 #include <torch/torch.h>
 #include <tuple>
+#include <ATen/cuda/CUDAContext.h>
+#include <c10/cuda/CUDAStream.h>
 
 // Forward declarations for core data structures if needed
 namespace gs {
@@ -35,6 +37,7 @@ namespace gsplat_newton {
  * @param context A reference to the LocalNewtonContext struct where all output
  * tensors (forward results and derivatives) will be stored.
  */
+/*
 void projection_fwd_with_derivatives(
     const torch::Tensor& means3D,
     const torch::Tensor& rotations,
@@ -43,8 +46,41 @@ void projection_fwd_with_derivatives(
     const torch::Tensor& K,
     uint32_t image_width,
     uint32_t image_height,
-    gs::LocalNewtonContext& context // Output parameter
-);
+    LocalNewtonContext& context // Output parameter
+);*/
+
+std::tuple<
+    at::Tensor,  // radii
+    at::Tensor,  // means2d
+    at::Tensor,  // depths
+    at::Tensor,  // conics
+    at::Tensor,  // compensations
+    at::Tensor,  // jacobians
+    at::Tensor,  // H_mean_y
+    at::Tensor,  // H_mean_x
+    at::Tensor,  // dSigma_dx
+    at::Tensor,  // dSigma_dy
+    at::Tensor,  // dSigma_dz
+    at::Tensor,  // H_Sigma
+    at::Tensor,  // dr_dp
+    at::Tensor>  // d2r_dp2_compact
+projection_ewa_3dgs_fused_fwd_LN(
+    const at::Tensor means,                // [N, 3]
+    const at::optional<at::Tensor> covars, // [N, 6] optional
+    const at::optional<at::Tensor> quats,  // [N, 4] optional
+    const at::optional<at::Tensor> scales, // [N, 3] optional
+    const at::optional<at::Tensor> opacities, // [N] optional
+    const at::Tensor viewmats,             // [C, 4, 4]
+    const at::Tensor Ks,                   // [C, 3, 3]
+    const uint32_t image_width,
+    const uint32_t image_height,
+    const float eps2d,
+    const float near_plane,
+    const float far_plane,
+    const float radius_clip,
+    const bool calc_compensations,
+    const CameraModelType camera_model
+)
 
 
 // ========================================================================
@@ -66,7 +102,7 @@ torch::Tensor sh_fwd_with_derivatives(
     int degree,
     const torch::Tensor& view_dirs,
     const torch::Tensor& sh_coeffs,
-    gs::LocalNewtonContext& context // Output parameter for derivatives
+    LocalNewtonContext& context // Output parameter for derivatives
 );
 
 /**
@@ -76,7 +112,7 @@ torch::Tensor sh_fwd_with_derivatives(
  * @param context A reference to the context struct, which contains the input
  * derivatives and will be updated with the final ∂c̃/∂p and ∂²c̃/∂p².
  */
-void chain_rule_sh_position(gs::LocalNewtonContext& context);
+void chain_rule_sh_position(LocalNewtonContext& context);
 
 
 // ========================================================================
@@ -138,7 +174,7 @@ std::tuple<
  * @param d2L_dcolor2 The second derivative of the loss w.r.t. rendered colors.
  */
 void aggregate_intermediate_derivatives(
-    gs::LocalNewtonContext& context,
+    LocalNewtonContext& context,
     const gs::RenderOutput& render_output,
     const torch::Tensor& dL_dcolor,
     const torch::Tensor& d2L_dcolor2
@@ -156,41 +192,41 @@ void aggregate_intermediate_derivatives(
  * @param context The context struct containing all necessary input derivatives.
  * The final g and H for each parameter group will be stored back into the context.
  */
-void assemble_newton_derivatives(gs::LocalNewtonContext& context);
+void assemble_newton_derivatives(LocalNewtonContext& context);
 
 /**
  * @brief Solves the local Newton system and updates the 3D positions of the Gaussians.
  * @param context The context struct containing the final position gradients and Hessians.
  * The underlying SplatData within the context will be updated.
  */
-void update_position(gs::LocalNewtonContext& context, gs::SplatData& model);
+void update_position(LocalNewtonContext& context, SplatData& model);
 
 /**
  * @brief Solves the local Newton system and updates the scaling parameters.
  * @param context The context struct containing the final scaling gradients and Hessians.
  * The underlying SplatData will be updated.
  */
-void update_scaling(gs::LocalNewtonContext& context, gs::SplatData& model);
+void update_scaling(LocalNewtonContext& context, SplatData& model);
 
 /**
  * @brief Solves the local Newton system and updates the rotation quaternions.
  * @param context The context struct containing the final rotation gradients and Hessians.
  * The underlying SplatData will be updated.
  */
-void update_rotation(gs::LocalNewtonContext& context, gs::SplatData& model);
+void update_rotation(LocalNewtonContext& context, SplatData& model);
 
 /**
  * @brief Solves the local Newton system (with log barrier) and updates the opacities.
  * @param context The context struct containing the final opacity gradients and Hessians.
  * The underlying SplatData will be updated.
  */
-void update_opacity(gs::LocalNewtonContext& context, gs::SplatData& model);
+void update_opacity(LocalNewtonContext& context, SplatData& model);
 
 /**
  * @brief Solves the local Newton system and updates the SH color coefficients.
  * @param context The context struct containing the final color gradients and Hessians.
  * The underlying SplatData will be updated.
  */
-void update_color(gs::LocalNewtonContext& context, gs::SplatData& model);
+void update_color(LocalNewtonContext& context, SplatData& model);
 
 } // namespace gsplat_newton

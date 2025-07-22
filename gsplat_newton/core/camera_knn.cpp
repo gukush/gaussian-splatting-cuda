@@ -1,4 +1,4 @@
-#include "core/camera_knn.hpp"
+#include "gsplat_newton/camera_knn.hpp"
 
 namespace gs {
 

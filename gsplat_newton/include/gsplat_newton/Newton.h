@@ -6,9 +6,9 @@
 
 #include <ATen/core/Tensor.h>
 #include <tuple>
-#include "core/local_newton_context.hpp" // Include the user's context struct definition
+#include "gsplat_newton/local_newton_context.hpp" // Include the user's context struct definition
 
-namespace gsplat {
+namespace gsplat_newton {
 
 /**
  * @brief Performs the backward, assembly, solve, and update stages of a local Newton step.

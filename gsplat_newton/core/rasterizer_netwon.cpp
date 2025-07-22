@@ -1,21 +1,22 @@
-#include "core/rasterizer_newton.hpp"
-#include "core/local_newton_context.hpp"
-#include "kernels.hpp" // Your custom Newton kernels
+#include "core/splat_data.hpp"
+#include "gsplat_newton/rasterizer_newton.hpp"
+#include "gsplat_newton/local_newton_context.hpp"
+#include "gsplat_newton/kernels.hpp" // Your custom Newton kernels
 #include "Ops.h"       // For gsplat::rasterize_to_pixels_3dgs_fwd, etc.
 #include <torch/torch.h>
-#include "newton_functions.hpp"
+#include "gsplat_newton/newton_functions.hpp"
+#include "core/camera.hpp"
+#include "core/rasterizer.hpp"
 
 namespace gs {
-
 using torch::indexing::None;
 using torch::indexing::Slice;
-
 // This is a placeholder for the forward rasterization part of the original pipeline.
 // In a real scenario, you would have a non-autograd version of this.
 // For now, we'll use the existing forward kernel.
 namespace gsplat = ::gsplat;
 
-    inline torch::Tensor spherical_harmonics(
+    inline std::tuple<torch::Tensor> spherical_harmonics(
         int sh_degree,
         const torch::Tensor& dirs,
         const torch::Tensor& coeffs,
@@ -41,24 +42,26 @@ namespace gsplat = ::gsplat;
                                               torch::TensorOptions().dtype(torch::kInt32).device(dirs.device()));
 
         // Call the autograd function
-        return SphericalHarmonicsForward(
+        auto out = SphericalHarmonicsForward(
             context,
             sh_degree_tensor,
             dirs.contiguous(),
             coeffs.contiguous(),
-            masks.defined() ? masks.contiguous() : masks)[0];
+            masks.defined() ? masks.contiguous() : masks);
+        return std::get<0>(out);
     }
 
 
 
 RenderOutput rasterize_newton_step(
     Camera& viewpoint_camera,
-    const SplatData& gaussian_model,
+    const ::SplatData& gaussian_model,
     torch::Tensor& bg_color,
     const torch::Tensor& gt_image,
     float scaling_modifier,
+    bool antialiased,
     RenderMode render_mode,
-    LocalNewtonContext& context) {
+    LocalNewtonContext* context) {
 
     // ========================================================================
     // 1. INPUT VALIDATION AND SETUP
@@ -187,16 +190,20 @@ RenderOutput rasterize_newton_step(
         context->means2d = means2d;
         context->depths = depths;
         context->conics = conics;
-        context->compensations = compensations;
-        context->jacobians = jacobians;
-        context->H_mean_y = H_mean_y;
-        context->H_mean_x = H_mean_x;
-        context->dSigma_dx = dSigma_dx;
-        context->dSigma_dy = dSigma_dy;
-        context->dSigma_dz = dSigma_dz;
-        context->H_Sigma = H_Sigma;
-        context->dr_dp = dr_dp;
-        context->d2r_dp2_compact = d2r_dp2_compact;
+        //context->compensations = compensations;
+        context->d_mean2d_dp = jacobians;
+        context->H_mean2d_dp = torch::stack({
+        H_mean_x,  // [C, N, 3, 3] for x component
+        H_mean_y   // [C, N, 3, 3] for y component
+    }, /*dim=*/2);
+            context->d_Sigma_dp = torch::stack({
+        dSigma_dx,  // [C, N, 2, 2] derivative w.r.t. x
+        dSigma_dy,   // [C, N, 2, 2] derivative w.r.t. y
+        dSigma_dz    // [C, N, 2, 2] derivative w.r.t. z
+    }, /*dim=*/2);
+        context->H_Sigma_dp = H_Sigma;
+        context->d_r_dp = dr_dp;
+        context->H_r_dp = d2r_dp2_compact;
     }
 
     // ========================================================================
@@ -214,18 +221,18 @@ RenderOutput rasterize_newton_step(
 
     // Create masks based on radii
     auto masks = (radii > 0).all(-1); // [C, N]
-
+    auto coeffs_flat = sh_coeffs.reshape({-1, sh_coeffs.size(-2), 3});
     // The Python code broadcasts colors from [N, K, 3] to [C, N, K, 3] if needed
-    auto shs = sh_coeffs.unsqueeze(0); // [1, N, K, 3]
+    //auto shs = sh_coeffs.unsqueeze(0); // [1, N, K, 3]
 
-    // This kernel computes color and ∂c̃/∂r, ∂²c̃/∂r²
-    auto colors = gsplat_newton::spherical_harmonics(
+    auto colors_tuple = spherical_harmonics(
         sh_degree,
-        context.view_dirs, // Input from projection context
-        shs_for_eval,
-        context            // Populates SH derivatives in context
+        context->view_dirs, // Input from projection context
+        coeffs_flat,
+        masks,
+        *context            // Populates SH derivatives in context
     );
-
+    auto colors = std::get<0>(colors_tuple);
     // This kernel computes ∂c̃/∂p, ∂²c̃/∂p² using the chain rule - chain rule already computed in the spherical harmonics function
     // gsplat_newton::chain_rule_sh_position(context);
 
@@ -270,12 +277,14 @@ RenderOutput rasterize_newton_step(
     const int tile_height = (image_height + tile_size - 1) / tile_size;
 
     const auto isect_results = gsplat::intersect_tile(
-        context.means2d, radii, context.depths, {}, {},
+        context->means2d, radii, context->depths, {}, {},
         1, tile_size, tile_width, tile_height,
         true);
     const auto flatten_ids = std::get<2>(isect_results);
     auto isect_offsets = gsplat::intersect_offset(std::get<1>(isect_results), 1, tile_width, tile_height);
-
+    const auto tiles_per_gauss = std::get<0>(isect_results);
+    const auto isect_ids = std::get<1>(isect_results);
+    const auto flatten_ids = std::get<2>(isect_results);
 
     TORCH_CHECK(tiles_per_gauss.is_cuda(), "tiles_per_gauss must be on CUDA");
     TORCH_CHECK(isect_ids.is_cuda(), "isect_ids must be on CUDA");
@@ -284,7 +293,7 @@ RenderOutput rasterize_newton_step(
 
     // Forward Rasterization Kernel
     auto raster_results = gsplat::rasterize_to_pixels_3dgs_fwd(
-        context.means2d, context.conics, render_colors, opacities.unsqueeze(0),
+        context->means2d, context->conics, render_colors, opacities.unsqueeze(0),
         final_bg, {}, // No masks
         image_width, image_height, tile_size,
         isect_offsets, flatten_ids);
@@ -293,10 +302,10 @@ RenderOutput rasterize_newton_step(
     auto rendered_alpha = std::get<1>(raster_results);
     auto last_ids = std::get<2>(raster_results);
     if(context) {
-        context.flatten_ids = flatten_ids;
-        context.last_ids = last_ids;
-        context.tile_offsets = isect_offsets;
-        context.render_alphas = rendered_alpha;
+        context->flatten_ids = flatten_ids;
+        context->last_ids = last_ids;
+        context->tile_offsets = isect_offsets;
+        context->render_alphas = rendered_alpha;
     }
     // ========================================================================
     // 5. LOSS & DERIVATIVE AGGREGATION
@@ -331,8 +340,8 @@ RenderOutput rasterize_newton_step(
     result.image = torch::clamp(rendered_image.squeeze(0).permute({2, 0, 1}), 0.0f, 1.0f);
     result.alpha = rendered_alpha.squeeze(0).permute({2, 0, 1});
     result.depth = torch::Tensor(); // Or compute if needed
-    result.means2d = context.means2d.squeeze(0);
-    result.depths = context.depths.squeeze(0);
+    result.means2d = context->means2d.squeeze(0);
+    result.depths = context->depths.squeeze(0);
     result.radii = std::get<0>(radii.squeeze(0).max(-1));
     result.visibility = (result.radii > 0);
     result.width = image_width;
@@ -343,4 +352,4 @@ RenderOutput rasterize_newton_step(
     return result;
 }
 
-} // namespace gs
+} //namespace gs

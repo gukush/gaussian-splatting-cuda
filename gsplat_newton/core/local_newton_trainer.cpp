@@ -1,12 +1,12 @@
-#include "core/trainer.hpp"
-#include "core/rasterizer.hpp"
+#include "gsplat_newton/local_newton_trainer.hpp"
+#include "gsplat_newton/rasterizer_newton.hpp"
 #include "kernels/fused_ssim.cuh"
 #include "visualizer/detail.hpp"
 #include <chrono>
 #include <iostream>
 #include <numeric>
 #include <torch/torch.h>
-#include "local_newton_context.hpp"
+#include "gsplat_newton/local_newton_context.hpp"
 
 namespace gs {
 

@@ -1,6 +1,9 @@
-#include "LocalNewtonContext.h"
+#include "gsplat_newton/local_newton_context.hpp"
+#include "Ops.h"
+#include "gsplat_newton/kernels.hpp"
 #include <torch/torch.h>
 #include <tuple>
+
 
 std::tuple<torch::Tensor, torch::Tensor, torch::Tensor> RasterizationFunctionForward(
     LocalNewtonContext* ctx,
@@ -92,7 +95,7 @@ std::tuple<torch::Tensor, torch::Tensor, torch::Tensor> RasterizationFunctionFor
     // Store relevant tensors in LocalNewtonContext
     ctx->means2d = means2d;
     ctx->conics = conics;
-    ctx->isect_offsets = isect_offsets;
+    ctx->tile_offsets = isect_offsets;
     ctx->flatten_ids = flatten_ids;
 
     return {rendered_image, rendered_alpha, last_ids};
@@ -175,7 +178,7 @@ ProjectionFunctionForward(
     auto scaled_scales = scales * scaling_modifier;
 
     // --- call your LN‐aware kernel ---
-    auto proj = gsplat::projection_ewa_3dgs_fused_fwd_LN(
+    auto proj = gsplat_newton::projection_ewa_3dgs_fused_fwd_LN(
         means3D,
         /*covars=*/{}, /*quats=*/quats,
         /*scales=*/scaled_scales,
@@ -239,7 +242,7 @@ ProjectionFunctionForward(
 }
 
 
-
+/*
 std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor>
 compute_local_newton_backward(
     LocalNewtonContext& ctx,
@@ -324,7 +327,7 @@ compute_local_newton_backward(
         v_bg_color     // gradient for background color
     };
 }
-
+*/
 
 
     // SphericalHarmonicsFunction implementation

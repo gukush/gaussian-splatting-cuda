@@ -1,8 +1,8 @@
-#include "core/kernels.hpp"
-#include "core/local_newton_context.hpp"
-#include "utils/cuda_utils.cuh" // For AT_DISPATCH_FLOATING_TYPES, etc.
-#include "utils/projection.h"   // For CameraModelType
-#include "ssim.h"               // For SSIM functions
+#include "gsplat_newton/local_newton_context.hpp"
+#include "gsplat_newton/kernels.hpp"
+#include "gsplat/cuda_utils.cuh" // For AT_DISPATCH_FLOATING_TYPES, etc.
+#include "projection.h"   // For CameraModelType
+//#include "kernels/ssim.h"               // For SSIM functions
 #include <ATen/cuda/CUDAContext.h>
 #include <c10/cuda/CUDAStream.h>
 

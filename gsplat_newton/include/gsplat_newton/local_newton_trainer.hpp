@@ -1,7 +1,7 @@
 #pragma once
 
 #include "core/bilateral_grid.hpp"
-#include "core/camera_knn.hpp"
+#include "gsplat_newton/camera_knn.hpp"
 #include "core/dataset.hpp"
 #include "core/istrategy.hpp"
 #include "core/metrics.hpp"

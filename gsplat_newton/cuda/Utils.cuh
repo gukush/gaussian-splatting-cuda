@@ -4,6 +4,11 @@
 /// coeffs : pointer to [ (D+1)^2 × 3 ] float array
 ///   c     : which color channel (0=R,1=G,2=B)
 /// returns : float3 = gradient wrt the *normalized* viewing direction
+
+struct SymH3 {
+    float xx, xy, xz, yy, yz, zz;
+};
+
 inline __device__ glm::vec3
 sh_color_dir_grad(
     uint32_t     degree,
