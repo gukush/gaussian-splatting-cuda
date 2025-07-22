@@ -3,6 +3,7 @@
 #include "kernels.hpp" // Your custom Newton kernels
 #include "Ops.h"       // For gsplat::rasterize_to_pixels_3dgs_fwd, etc.
 #include <torch/torch.h>
+#include "newton_functions.hpp"
 
 namespace gs {
 
@@ -13,6 +14,42 @@ using torch::indexing::Slice;
 // In a real scenario, you would have a non-autograd version of this.
 // For now, we'll use the existing forward kernel.
 namespace gsplat = ::gsplat;
+
+    inline torch::Tensor spherical_harmonics(
+        int sh_degree,
+        const torch::Tensor& dirs,
+        const torch::Tensor& coeffs,
+        const torch::Tensor& masks = {},
+        LocalNewtonContext& context) {
+
+        // Validate inputs
+        TORCH_CHECK((sh_degree + 1) * (sh_degree + 1) <= coeffs.size(-2),
+                    "coeffs K dimension must be at least ", (sh_degree + 1) * (sh_degree + 1),
+                    ", got ", coeffs.size(-2));
+        TORCH_CHECK(dirs.sizes().slice(0, dirs.dim() - 1) == coeffs.sizes().slice(0, coeffs.dim() - 2),
+                    "dirs and coeffs batch dimensions must match");
+        TORCH_CHECK(dirs.size(-1) == 3, "dirs last dimension must be 3, got ", dirs.size(-1));
+        TORCH_CHECK(coeffs.size(-1) == 3, "coeffs last dimension must be 3, got ", coeffs.size(-1));
+
+        if (masks.defined()) {
+            TORCH_CHECK(masks.sizes() == dirs.sizes().slice(0, dirs.dim() - 1),
+                        "masks shape must match dirs shape without last dimension");
+        }
+
+        // Create sh_degree tensor
+        auto sh_degree_tensor = torch::tensor({sh_degree},
+                                              torch::TensorOptions().dtype(torch::kInt32).device(dirs.device()));
+
+        // Call the autograd function
+        return SphericalHarmonicsForward(
+            context,
+            sh_degree_tensor,
+            dirs.contiguous(),
+            coeffs.contiguous(),
+            masks.defined() ? masks.contiguous() : masks)[0];
+    }
+
+
 
 RenderOutput rasterize_newton_step(
     Camera& viewpoint_camera,
@@ -167,27 +204,34 @@ RenderOutput rasterize_newton_step(
     // ========================================================================
     // These kernels compute color and its derivatives w.r.t. view direction,
     // then use the chain rule to find derivatives w.r.t. 3D position.
+    // Step 2: Compute colors from SH
+    // First, compute camera position from inverse viewmat
+    auto viewmat_inv = torch::inverse(viewmat);
+    auto campos = viewmat_inv.index({Slice(), Slice(None, 3), 3}); // [C, 3]
 
-    auto shs_for_eval = sh_coeffs.unsqueeze(0); // [1, N, K, 3]
+    // Compute directions from camera to each Gaussian
+    auto dirs = means3D.unsqueeze(0) - campos.unsqueeze(1); // [C, N, 3]
+
+    // Create masks based on radii
+    auto masks = (radii > 0).all(-1); // [C, N]
+
+    // The Python code broadcasts colors from [N, K, 3] to [C, N, K, 3] if needed
+    auto shs = sh_coeffs.unsqueeze(0); // [1, N, K, 3]
 
     // This kernel computes color and ∂c̃/∂r, ∂²c̃/∂r²
-    auto colors = gsplat_newton::spherica(
+    auto colors = gsplat_newton::spherical_harmonics(
         sh_degree,
         context.view_dirs, // Input from projection context
         shs_for_eval,
         context            // Populates SH derivatives in context
     );
 
-    // This kernel computes ∂c̃/∂p, ∂²c̃/∂p² using the chain rule
-    gsplat_newton::chain_rule_sh_position(context);
+    // This kernel computes ∂c̃/∂p, ∂²c̃/∂p² using the chain rule - chain rule already computed in the spherical harmonics function
+    // gsplat_newton::chain_rule_sh_position(context);
 
     // Apply standard color transformation for rendering
     colors = torch::clamp_min(colors + 0.5f, 0.0f);
 
-    // ========================================================================
-    // 4. FORWARD RASTERIZATION
-    // ========================================================================
-    // We still need to perform a standard forward pass to get the rendered image.
 
     // Handle different render modes
     torch::Tensor render_colors;
@@ -214,6 +258,11 @@ RenderOutput rasterize_newton_step(
         final_opacities = opacities.unsqueeze(0);
     }
     TORCH_CHECK(final_opacities.is_cuda(), "final_opacities must be on CUDA");
+
+    // ========================================================================
+    // 4. FORWARD RASTERIZATION
+    // ========================================================================
+    // We still need to perform a standard forward pass to get the rendered image.
 
     // Tiling and Intersection (standard, no derivatives)
     const int tile_size = 16;

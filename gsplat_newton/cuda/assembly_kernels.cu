@@ -572,7 +572,6 @@ __global__ void assemble_newton_derivatives_kernel(
     // Color solve (R, G, B)
     // ========================================================================
     for (int chan = 0; chan < 3; ++chan) {
-        // BYLO ZLE
         dc_dcolor   [idx3] = grad_c;
         d2c_dcolor2 [idx3] = hess_c;
     }

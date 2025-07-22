@@ -135,42 +135,11 @@ projection_ewa_3dgs_fused_fwd_LN(
 // 2. SPHERICAL HARMONICS (SH) KERNELS
 // ========================================================================
 
-torch::Tensor sh_fwd_with_derivatives(int degree,
-                                      const torch::Tensor &view_dirs,
-                                      const torch::Tensor &sh_coeffs,
-                                      torch::Tensor &d_color_d_dir,
-                                      torch::Tensor &H_color_d_dir) {
-    const uint32_t N = view_dirs.size(1);
-    const uint32_t C = view_dirs.size(0);
-    TORCH_CHECK(C == 1, "Only single camera supported for now in SH kernels.");
 
-    auto colors = torch::zeros({C, N, 3}, view_dirs.options());
-    if (N == 0)
-        return colors;
-
-    const dim3 threads(256, 1, 1);
-    const dim3 blocks(GET_BLOCKS(N, threads.x), 1, 1);
-
-    AT_DISPATCH_FLOATING_TYPES(
-        view_dirs.scalar_type(), "sh_fwd_with_derivatives_kernel", ([&] {
-            sh_fwd_with_derivatives_kernel<scalar_t>
-                <<<blocks, threads, 0, at::cuda::getCurrentCUDAStream()>>>(
-                    N, degree, view_dirs.data_ptr<scalar_t>(),
-                    sh_coeffs.data_ptr<scalar_t>(),
-                    colors.data_ptr<scalar_t>(),
-                    d_color_d_dir.data_ptr<scalar_t>(),
-                    H_color_d_dir.data_ptr<scalar_t>());
-        }));
-    C10_CUDA_KERNEL_LAUNCH_CHECK();
-    return colors;
-}
-
-
-std::tuple<at::Tensor, at::Tensor, at::Tensor> spherical_harmonics_LN(
+std::tuple<at::Tensor, at::Tensor> spherical_harmonics_LN(
     const uint32_t      degrees_to_use,
     const at::Tensor&   dirs,       // [..., 3]
     const at::Tensor&   coeffs,     // [..., K, 3]
-    const at::Tensor&   v_colors    // [..., 3]
 ) {
     DEVICE_GUARD(dirs);
     CHECK_INPUT(dirs);
@@ -182,25 +151,32 @@ std::tuple<at::Tensor, at::Tensor, at::Tensor> spherical_harmonics_LN(
     TORCH_CHECK(v_colors.size(-1) == 3,   "v_colors last dim must be 3");
 
     // outputs
-    at::Tensor v_coeffs = at::empty_like(coeffs);  // [..., K, 3]
-    at::Tensor v_dir    = at::empty_like(dirs);    // [..., 3]
+    auto batch_dims = dirs.sizes().slice(0, dirs.dim() - 1);
+    auto grad_shape = batch_dims.vec();
+    grad_shape.push_back(3); // For the 3 output color channels
+    grad_shape.push_back(3); // For the 3 input direction components (x, y, z)
+    at::Tensor d_color_d_dir = at::empty(grad_shape, dirs.options());
 
+    // 3. Initialize the `H_color_d_dir` (Hessian) output tensor
+    //    Shape: [..., 3, 6]
+    auto hess_shape = batch_dims.vec();
+    hess_shape.push_back(3); // For the 3 output color channels
+    hess_shape.push_back(6); // For the 6 packed Hessian elements (xx,yy,zz,xy,xz,yz)
+    at::Tensor H_color_d_dir = at::empty(hess_shape, dirs.options());
     // replace last dim with 6 for Hessians
-    std::vector<int64_t> H_sizes = dirs.sizes().vec();
-    H_sizes.back() = 6;
-    at::Tensor H_dir = at::empty(H_sizes, dirs.options());
+    //std::vector<int64_t> H_sizes = dirs.sizes().vec();
+    //H_sizes.back() = 6;
+    //at::Tensor H_dir = at::empty(H_sizes, dirs.options());
 
     launch_spherical_harmonics_LN_kernel(
         degrees_to_use,
         dirs,
         coeffs,
-        v_colors,
-        v_coeffs,
-        v_dir,
-        H_dir
+        d_color_d_dir,
+        H_color_d_dir,
     );
 
-    return std::make_tuple(v_coeffs, v_dir, H_dir);
+    return std::make_tuple(d_color_d_dir, H_dir);
 }
 
 

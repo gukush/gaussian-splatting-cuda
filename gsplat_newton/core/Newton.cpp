@@ -7,7 +7,7 @@
 
 namespace gsplat {
 
-void local_newton_backward_and_update(
+void local_newton_backward(
     const gsplat_newton::LocalNewtonContext& context,
     SplatData& gaussian_model,
     uint32_t image_width,
@@ -68,7 +68,25 @@ void local_newton_backward_and_update(
     auto& H_G_mixed_totals = std::get<6>(intermediate_derivs);
     auto& v_opac = std::get<7>(intermediate_derivs);
 
-
+    // --- Stage 2: "Backward pass" for Spherical Harmonics
+    //
+    auto sh_outputs = launch_spherical_harmonics_LN_kernel(
+        context.sh_degree,
+        context.view_dirs,
+        context.coeffs,
+        dc_dcSH_totals
+    );
+    auto& dcRAST_dck = std::get<0>(sh_outputs);
+    auto& dcRAST_dr = std::get<1>(sh_outputs);
+    auto& H_cRAST_r = std::get<2>(sh_outputs);
+    auto chained_outputs = launch_chain_rule_color_position_kernel(
+        means,
+        viewmats.slice(0,0,1).inverse().slice(1,3,4).squeeze(), //camera_pos ??????
+        dcRAST_dr,
+        H_cRAST_r
+    );
+    auto& d_cSH_dp = std::get<0>(chained_outputs);
+    auto& H_cSH_dp = std::get<1>(chained_outputs);
     // --- Stage 2: Assemble Local Newton Systems ---
     // Combines projection derivatives (from context) and rasterization derivatives (from above).
     auto newton_systems = gsplat_newton::assemble_newton_derivatives(
@@ -88,10 +106,10 @@ void local_newton_backward_and_update(
         context.d_Sigma_dp.select(2, 0), // dSigma_dpx
         context.d_Sigma_dp.select(2, 1), // dSigma_dpy
         context.d_Sigma_dp.select(2, 2), // dSigma_dpz
-        context.d_cSH_dp, // dc_sh_dp
+        d_cSH_dp, // dc_sh_dp
         context.H_mean2d_dp.select(2, 0), // H_pi_px
         context.H_mean2d_dp.select(2, 1), // H_pi_py
-        context.H_cSH_dp, // H_c_sh_p
+        H_cSH_dp, // H_c_sh_p
         context.H_Sigma_dp.select(2, 0), // H_Sigma_pxx
         context.H_Sigma_dp.select(2, 1), // H_Sigma_pxy
         context.H_Sigma_dp.select(2, 2), // H_Sigma_pyy
@@ -103,22 +121,53 @@ void local_newton_backward_and_update(
         viewmats.slice(0,0,1).inverse().slice(1,3,4).squeeze() // camera_pos
     );
 
-    auto& dL_d_pos      = std::get<0>(newton_systems);
-    auto& H_L_pos       = std::get<1>(newton_systems);
-    auto& dL_d_scale    = std::get<2>(newton_systems);
-    auto& H_L_scale     = std::get<3>(newton_systems);
-    auto& dL_d_rot      = std::get<4>(newton_systems);
-    auto& H_L_rot       = std::get<5>(newton_systems);
-    auto& dL_d_opacity  = std::get<6>(newton_systems);
-    auto& H_L_opacity   = std::get<7>(newton_systems);
+    context.dL_d_pos      = std::get<0>(newton_systems);
+    context.H_L_pos       = std::get<1>(newton_systems);
+    context.dL_d_scale    = std::get<2>(newton_systems);
+    context.H_L_scale     = std::get<3>(newton_systems);
+    context.dL_d_rot      = std::get<4>(newton_systems);
+    context.H_L_rot       = std::get<5>(newton_systems);
+    context.dL_d_opacity  = std::get<6>(newton_systems);
+    context.H_L_opacity   = std::get<7>(newton_systems);
     // Note: assemble_newton_derivatives returns 8 tensors, color is not separate.
     // We will need to compute color derivatives separately or assume they are part of another tensor.
     // For now, creating placeholder tensors for color update.
-    auto dL_d_color = torch::zeros({means.size(0), 3}, means.options());
-    auto H_L_color = torch::zeros({means.size(0), 3, 3}, means.options());
+    context.dL_d_color = torch::zeros({means.size(0), 3}, means.options());
+    context.H_L_color = torch::zeros({means.size(0), 3, 3}, means.options());
 
+}
 
-    // --- Stage 3: Solve Systems, Backproject, and Apply Updates ---
+} // namespace gsplat
+
+solve_and_update(
+    const gsplat_newton::LocalNewtonContext& context,
+    SplatData& gaussian_model,
+    uint32_t image_width,
+    uint32_t image_height
+) {
+
+    auto& means = gaussian_model.get_means();
+    auto& scales = gaussian_model.get_scaling();
+    auto& quats = gaussian_model.get_rotation();
+    auto& opacities = gaussian_model.get_opacity();
+    auto& sh_coeffs = gaussian_model.get_shs();
+    DEVICE_GUARD(means);
+    // Input checks
+    CHECK_INPUT(means);
+    CHECK_INPUT(scales);
+    CHECK_INPUT(quats);
+    CHECK_INPUT(opacities);
+    CHECK_INPUT(sh_coeffs);
+    auto& dL_d_pos = context.dL_d_pos;
+    auto& H_L_pos = context.H_L_pos;
+    auto& dL_d_scale = context.dL_d_scale;
+    auto& H_L_scale = context.H_L_scale;
+    auto& dL_d_rot = context.dL_d_rot;
+    auto& H_L_rot = context.H_L_rot;
+    auto& dL_d_opacity = context.dL_d_opacity;
+    auto& H_L_opacity = context.H_L_opacity;
+    auto& dL_d_color = context.dL_d_color;
+    auto& H_L_color = context.H_L_color;
     launch_solve_and_update_all_attributes_kernel(
         dL_d_pos, H_L_pos,
         dL_d_scale, H_L_scale,
@@ -130,5 +179,3 @@ void local_newton_backward_and_update(
         means, scales, quats, opacities, sh_coeffs // Pass by reference to update in-place
     );
 }
-
-} // namespace gsplat

@@ -34,6 +34,27 @@ Camera::Camera(const torch::Tensor& R,
       _world_view_transform{world_to_view(R, T)} {
 }
 
+
+Camera::Camera(const Camera& other, int new_width, int new_height)
+    : _uid(other._uid),
+      _focal_x(other._focal_x),
+      _focal_y(other._focal_y),
+      _center_x(other._center_x),
+      _center_y(other._center_y),
+      _radial_distortion(other._radial_distortion),
+      _tangential_distortion(other._tangential_distortion),
+      _camera_model_type(other._camera_model_type),
+      _image_name(other._image_name),
+      _image_path(other._image_path),
+      _camera_width(other._camera_width),     // Preserve original dimensions
+      _camera_height(other._camera_height),   // Preserve original dimensions
+      _image_width(new_width),                // Set new output width
+      _image_height(new_height),              // Set new output height
+      _world_view_transform(other._world_view_transform.clone()) // Deep copy the transform
+{
+    // No body needed, everything is handled in the initializer list
+}
+
 torch::Tensor Camera::K() const {
     const float tanfovx = std::tan(_FoVx * 0.5f);
     const float tanfovy = std::tan(_FoVy * 0.5f);

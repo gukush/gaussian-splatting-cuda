@@ -123,17 +123,23 @@ __global__ void chain_rule_color_position_global_kernel(
     );
 }
 
-void launch_chain_rule_color_position_kernel(
+std::tuple<at::Tensor, at::Tensor> launch_chain_rule_color_position_kernel(
     const at::Tensor& p_k,             // [...,3]
     const at::Tensor& camera_center,   // [3]
     const at::Tensor& color_dir_grad,  // [...,3]
     const at::Tensor& color_dir_hess,  // [...,6]
-    at::Tensor&       color_pos_grad,  // [...,3]
-    at::Tensor&       color_pos_hess   // [...,6]
+    //at::Tensor&       color_pos_grad,  // [...,3]
+    //at::Tensor&       color_pos_hess   // [...,6]
 ) {
     const uint32_t N = p_k.numel() / 3;
-    if (N == 0) return;
-
+    if (N == 0) {
+      // return two empty tensors of shape [0,3] and [0,6]
+      auto empty_grad = at::empty({0,3}, p_k_.options());
+      auto empty_hess = at::empty({0,6}, p_k_.options());
+      return { empty_grad, empty_hess };
+    }
+    auto pos_grad = at::empty({(int64_t)N, 3}, p_k_.options());
+    auto pos_hess = at::empty({(int64_t)N, 6}, p_k_.options());
     const int threads = 256;
     const int blocks  = (N + threads - 1) / threads;
 
@@ -155,6 +161,8 @@ void launch_chain_rule_color_position_kernel(
             color_pos_hess.data_ptr<scalar_t>()
         );
     });
+
+    return { pos_grad, pos_hess };
 }
 
 
@@ -183,10 +191,8 @@ __global__ void chain_rule_color_position_batched(
         color_pos_hess ? &color_pos_hess[k*6] : nullptr
     );
 }
-
-
 template <typename scalar_t>
-__device__ void sh_coeffs_to_color_fast_LN(
+__device__ void sh_coeffs_to_color_fast_LN_old(
     const uint32_t degree,    // degree of SH to be evaluated
     const uint32_t c,         // color channel
     const vec3 &dir,          // [3]
@@ -342,7 +348,7 @@ __device__ void sh_coeffs_to_color_fast_LN(
         H_dir[5] += w * (c17*(3.f*x2-3.f*y2)*coeffs[17*3+c] + c18_a*4.f*xz*coeffs[18*3+c] + (c19_a*(-3.f*z2)+c19_b)*coeffs[19*3+c] + c18_a*(-4.f*yz)*coeffs[22*3+c] + c17*(-6.f*xy)*coeffs[23*3+c]);
     }
 
-final_projection:
+//final_projection:
     if (v_dir != nullptr) {
         vec3 dir_n = vec3(x, y, z);
         vec3 v_dir_n = vec3(v_x * v_colors_local, v_y * v_colors_local, v_z * v_colors_local);
@@ -354,6 +360,7 @@ final_projection:
     }
 }
 
+
 template <typename scalar_t>
 __global__ void spherical_harmonics_LN_kernel(
     const uint32_t N,
@@ -362,6 +369,7 @@ __global__ void spherical_harmonics_LN_kernel(
     const vec3   *__restrict__ dirs,        // [N, 3]
     const scalar_t *__restrict__ coeffs,    // [N, K, 3]
     const scalar_t *__restrict__ v_colors,  // [N, 3]
+    // outputs
     scalar_t       *__restrict__ out_v_coeffs, // [N, K, 3]
     vec3           *__restrict__ out_v_dir,    // [N, 3]
     scalar_t       *__restrict__ out_H_dir     // [N, 6]
@@ -385,29 +393,41 @@ __global__ void spherical_harmonics_LN_kernel(
             dir,
             coeffs_ptr,
             vc_ptr,
-            vc_out_ptr,
             vd_ptr,
             h_ptr
         );
     }
 }
 
-void launch_spherical_harmonics_LN_kernel(
+std::tuple<at::Tensor, at::Tensor, at::Tensor> launch_spherical_harmonics_LN_kernel(
     const uint32_t      degrees_to_use,
     const at::Tensor&   dirs,       // [..., 3]
     const at::Tensor&   coeffs,     // [..., K, 3]
-    const at::Tensor&   v_colors,   // [..., 3]
-    at::Tensor&         v_coeffs,   // [..., K, 3]  (output)
-    at::Tensor&         v_dir,      // [..., 3]     (output)
-    at::Tensor&         H_dir       // [..., 6]     (output)
+    const at::Tensor&   v_colors,   // dc_RAST / dc_SH
+    //outputs
+    //at::Tensor&         v_coeffs,   // dc_RAST / dc_attribute
+    //at::Tensor&         v_dir,      // [..., 3]     (dc_RAST / dr)
+    //at::Tensor&         H_dir       // [..., 6]     (d2c_RAST / dr2)
 ) {
     const uint32_t K = coeffs.size(-2);
     const uint32_t N = dirs.numel() / 3;
-    if (N == 0) return;
+    if (N == 0) {
+      // return three empty tensors with the right shape
+      return {
+        at::empty({0, K, 3}, dirs_.options()),
+        at::empty({0,   3}, dirs_.options()),
+        at::empty({0,   6}, dirs_.options())
+      };
+    }
+
+    // create outputs
+    auto v_coeffs = at::empty({(int64_t)N, (int64_t)K, 3}, dirs_.options());
+    auto v_dir    = at::empty({(int64_t)N,          3}, dirs_.options());
+    auto H_dir    = at::empty({(int64_t)N,          6}, dirs_.options());
 
     const int threads = 256;
     const int blocks  = (N + threads - 1) / threads;
-
+    at::Tensor d_color_d_dir = at::empty(grad_shape, dirs.options());
     AT_DISPATCH_FLOATING_TYPES(dirs.scalar_type(), "spherical_harmonics_LN_kernel", [&] {
         spherical_harmonics_LN_kernel<scalar_t><<<blocks, threads, 0, at::cuda::getCurrentCUDAStream()>>>(
             N,
@@ -421,4 +441,69 @@ void launch_spherical_harmonics_LN_kernel(
             H_dir.data_ptr<scalar_t>()
         );
     });
+    return { out_v_coeffs, out_v_dir, out_H_dir };
+}
+
+
+template<typename scalar_t>
+__global__ void color_solve_fwd_kernel(
+    const uint32_t N,               // number of pixels
+    const uint32_t K,               // number of SH‐bases per pixel
+    const scalar_t* __restrict__ dc_dcSH,  // [N, K]    pre‐computed per‐pixel red‐term (and green, blue if you pack them)
+    const scalar_t* __restrict__ B,        // [N, K, 3] SH‐basis rows for R,G,B
+    scalar_t* __restrict__ grad_c          // [N, 3]   ∂c/∂c_k summed over k, for R,G,B
+) {
+  // one thread per (pixel,channel)
+  uint32_t idx = blockIdx.x*blockDim.x + threadIdx.x;
+  if (idx >= N*3) return;
+
+  uint32_t pix = idx / 3;       // which pixel
+  uint32_t c   = idx % 3;       // which channel (0=R,1=G,2=B)
+
+  // pointer‐offset into dc_dcSH and B
+  // we assume you have packed your three channels of dc_dcSH
+  // into a single array [N,K,3] in the same layout as B;
+  // if you actually have three separate [N,K] arrays, just
+  // load the correct one here.
+  const scalar_t* term_base = dc_dcSH + pix*K*3;
+  const scalar_t* B_base    = B      + pix*K*3;
+
+  scalar_t sum = 0;
+  for (uint32_t k = 0; k < K; ++k) {
+    // dc_dcSH[pix,k,c] * B[pix,k,c]
+    sum += term_base[k*3 + c] * B_base[k*3 + c];
+  }
+
+  grad_c[idx] = sum;
+}
+
+//
+// Host‐side launcher (similar style to your SH‐kernels)
+//
+void launch_color_solve_fwd(
+    const uint32_t N,
+    const uint32_t K,
+    const at::Tensor& dc_dcSH,   // [..., K, 3]
+    const at::Tensor& B,         // [..., K, 3]
+    at::Tensor& grad_c           // [..., 3]
+) {
+  const auto n_elements = N*3;
+  const dim3 threads(256);
+  const dim3 grid((n_elements + threads.x - 1) / threads.x);
+
+  AT_DISPATCH_FLOATING_TYPES(
+    dc_dcSH.scalar_type(),
+    "color_solve_fwd_kernel",
+    [&] {
+      color_solve_fwd_kernel<scalar_t><<<
+          grid, threads, 0,
+          at::cuda::getCurrentCUDAStream()>>>(
+        N,
+        K,
+        dc_dcSH.data_ptr<scalar_t>(),
+        B.data_ptr<scalar_t>(),
+        grad_c.data_ptr<scalar_t>()
+      );
+    }
+  );
 }

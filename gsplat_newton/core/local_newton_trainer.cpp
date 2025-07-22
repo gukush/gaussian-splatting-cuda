@@ -93,6 +93,11 @@ namespace gs {
             val_dataset_ = std::make_shared<CameraDataset>(
                 dataset->get_cameras(), params.dataset, CameraDataset::Split::VAL);
 
+
+            // Add camera kNN
+            auto camera_positions = get_camera_positions(dataset->get_cameras());
+            train_dataset_->set_camera_knn(std::make_unique<gs::CameraKNN>(camera_positions));
+            val_dataset_->set_camera_knn(std::make_unique<gs::CameraKNN>(camera_positions));
             std::cout << "Created train/val split: "
                       << train_dataset_->size().value() << " train, "
                       << val_dataset_->size().value() << " val images" << std::endl;
@@ -107,6 +112,9 @@ namespace gs {
 
         train_dataset_size_ = train_dataset_->size().value();
 
+        auto camera_positions = get_camera_positions(dataset->get_cameras());
+        camera_knn_ = std::make_unique<gs::CameraKNN>(camera_positions);
+        std::cout << "Camera KNN initialized for trainer." << std::endl;
         strategy_->initialize(params.optimization);
 
         // Initialize bilateral grid if enabled
@@ -213,6 +221,18 @@ namespace gs {
         };
         */
 
+        // --- Example of how to get nearest neighbors ---
+        if (iter % 1000 == 0) { // Example: print every 1000 iterations
+            if (camera_knn_) {
+                auto neighbors = camera_knn_->find_neighbors(cam->uid(), 3);
+                std::cout << "Iter " << iter << ": Camera " << cam->uid() << " neighbors: ";
+                for (int neighbor_idx : neighbors) {
+                    std::cout << neighbor_idx << " ";
+                }
+                std::cout << std::endl;
+            }
+        }
+        // --- End of example ---
         auto render_fn = [this, &cam, render_mod]() {
             return gs::rasterize_newton_step(
                 *cam,
@@ -248,13 +268,68 @@ namespace gs {
         current_loss_ = loss.item<float>();
 
         // loss.backward(); WE USE LOCAL NEWTON!
-        local_newton_backward_and_update(
+        local_newton_backward(
+            ctx,
+            strategy_->get_model(),
+            static_cast<int>(cam->image_width()),
+            static_cast<int>(cam->image_height())
+        );
+
+        // Here we would need to do the overshoot prevention.
+        // but it requires 2 smaller images to be completely iteratet in the same manner.
+        auto neighbors = camera_knn_->find_neighbors(cam->uid(), 3);
+        for(int n_idx: neighbors) {
+            auto& neighbor_cam = train_dataset_->get(n_idx);
+            const int downsample_factor = 3;
+            int low_res_h = neighbor_cam->image_height() / downsample_factor;
+            int low_res_w = neighbor_cam->image_width() / downsample_factor;
+            Camera temp_neighbor_cam(*neighbor_cam, low_res_w, low_res_h);
+            LocalNewtonContext tmp_ctx;
+            RenderOutput tmp_r_output;
+            auto tmp_render_fn = [this, &cam, render_mod]() {
+            return gs::rasterize_newton_step(
+                *cam,
+                strategy_->get_model(),
+                background_,
+                1.0f,
+                false,
+                false,
+                render_mode
+            );
+        };
+            if (viewer_) {
+                std::lock_guard<std::mutex> lock(viewer_->splat_mtx_);
+                tmp_r_output = tmp_render_fn();
+            } else {
+                tmp_r_output = tmp_render_fn();
+            }
+
+            local_newton_backward(
+            tmp_ctx,
+            strategy_->get_model(),
+            static_cast<int>(temp_neighbor_cam->image_width()),
+            static_cast<int>(temp_neighbor_cam->image_height())
+        );
+            // aggregate hessians and gradients
+            ctx.dL_d_pos += tmp_ctx.dL_d_pos;
+            ctx.H_L_pos  += tmp_ctx.H_L_pos;
+            ctx.dL_d_scale += tmp_ctx.dL_d_scale;
+            ctx.H_L_scale += tmp_ctx.H_L_scale;
+            ctx.dL_d_rot += tmp_ctx.dL_d_rot;
+            ctx.H_L_rot += tmp_ctx.H_L_rot;
+            ctx.dL_d_opacity += tmp_ctx.dL_d_opacity;
+            ctx.H_L_opacity += tmp_ctx.H_L_opacity;
+            ctx.dL_d_color += tmp_ctx.dL_d_color;
+            ctx.H_L_color += tmp_ctx.H_L_color;
+        }
+
+        // --- Stage 3: Solve Systems, Backproject, and Apply Updates ---
+        solve_and_update(
             ctx,
             strategy_->get_model(),
             static_cast<int>(viewpoint_camera->image_width()),
             static_cast<int>(cam->image_height())
         );
-
 
         {
             torch::NoGradGuard no_grad;

@@ -51,7 +51,7 @@ __global__ void compute_intermediate_derivatives_kernel(
     vec3 *__restrict__ H_G_mean2d,       // Σ(∂²Gₖ/∂πₖ²)
     scalar_t *__restrict__ H_G_sigma,    // Σ(∂²Gₖ/∂Σₖ²), shape [N, 6]
     scalar_t *__restrict__ H_G_mixed,    // Σ(∂²Gₖ/∂πₖ∂Σₖ), shape [N, 6]
-    scalar_t *__restrict__ v_opac        // Σ(∂c/∂σₖ) hopefully... ???
+    scalar_t *__restrict__ dc_opac        // Σ(∂c/∂σₖ) hopefully... ???
 ) {
     // --- Boilerplate: Thread and memory indexing (from original kernel) ---
     auto block = cg::this_thread_block();
@@ -179,7 +179,7 @@ __global__ void compute_intermediate_derivatives_kernel(
             // Initialize local derivatives to zero for this thread
             float dc_dcSH_local = 0.f;
             float dc_dG_local = 0.f;
-            float v_opac_local = 0.f;
+            float dc_opac_local = 0.f;
             vec2 dG_dmean2d_local = {0.f, 0.f};
             vec3 dG_dSigma_local = {0.f, 0.f, 0.f};
             vec3 H_G_mean2d_local = {0.f, 0.f, 0.f};
@@ -220,7 +220,18 @@ __global__ void compute_intermediate_derivatives_kernel(
                 if (opac * vis <= 0.999f) {
                     dc_dG_local = opac * v_alpha;
                 }
-                v_opac_local = v_alpha * vis;
+                const float Gk_T_prefix = vis*T;
+                float dc_dsigma_k[CDIM]; // sigma means opacity here, not conic
+                #pragma unroll
+                for (uint32_t k_chan = 0; k_chan < CDIM; ++k_chan) {
+                    float color_term = rgbs_batch[t*CDIM + k_chan] - buffer[k_chan];
+                    dc_dsigma_k[k_chan] = Gk_T_prefix* color_term;
+                }
+                dc_opac_local = 0.f;
+                #pragma unroll
+                for (uint32_t k_chan = 0; k_chan < CDIM; ++k_chan) {
+                    dc_opac_local += v_render_c[k_chan] * dc_dsigma_k[k_chan];
+                }
                 const vec2 v_grad = {conic.x * delta.x + conic.y * delta.y, conic.y * delta.x + conic.z * delta.y};
 
                 dG_dmean2d_local = {-vis * v_grad.x, -vis * v_grad.y};
@@ -263,7 +274,7 @@ __global__ void compute_intermediate_derivatives_kernel(
             warpSum(dG_dmean2d_local, warp);
             warpSum(dG_dSigma_local, warp);
             warpSum(H_G_mean2d_local, warp);
-            warpSum(v_opac_local, warp);
+            warpSum(dc_opac_local, warp);
             #pragma unroll
             for (int k = 0; k < 6; ++k) {
                 warpSum(H_G_sigma_local[k], warp);
@@ -278,7 +289,7 @@ __global__ void compute_intermediate_derivatives_kernel(
                 int32_t g = id_batch[t];
                 gpuAtomicAdd(dc_dcSH + g, dc_dcSH_local);
                 gpuAtomicAdd(dc_dG + g, dc_dG_local);
-                gpuAtomicAdd(v_opac + g, v_opac_local);
+                gpuAtomicAdd(dc_opac + g, dc_opac_local);
 
                 gpuAtomicAdd(&(dG_dmean2d[g].x), dG_dmean2d_local.x);
                 gpuAtomicAdd(&(dG_dmean2d[g].y), dG_dmean2d_local.y);

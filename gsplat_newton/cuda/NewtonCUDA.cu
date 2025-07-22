@@ -69,7 +69,7 @@ __global__ void solve_updates_and_backproject_kernel_impl(
         vec3 axis = vec3(0, 0, 1);
         float angle = delta_theta;
         vec4 delta_q = vec4(cos(angle/2.f), sin(angle/2.f) * axis.x, sin(angle/2.f) * axis.y, sin(angle/2.f) * axis.z);
-        vec4 q_new = glm::cross(delta_q, q_current);
+        vec 4 q_new = delta_q * q_current;
         quats[gid * 4 + 0] = q_new.w;
         quats[gid * 4 + 1] = q_new.x;
         quats[gid * 4 + 2] = q_new.y;

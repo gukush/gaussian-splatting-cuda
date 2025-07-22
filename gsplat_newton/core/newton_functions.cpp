@@ -324,3 +324,99 @@ compute_local_newton_backward(
         v_bg_color     // gradient for background color
     };
 }
+
+
+
+    // SphericalHarmonicsFunction implementation
+   std::tuple<torch::Tensor> SphericalHarmonicsForward(
+        LocalNewtonContext& ctx,
+        torch::Tensor sh_degree_tensor, // [1] containing sh_degree
+        torch::Tensor dirs,             // [..., 3]
+        torch::Tensor coeffs,           // [..., K, 3]
+        torch::Tensor masks,
+        const torch::Tensor& means3D,
+        const torch::Tensor& viewmat) {          // [...] optional
+
+        const int sh_degree = sh_degree_tensor.item<int>();
+        const int num_sh_coeffs = (sh_degree + 1) * (sh_degree + 1);
+
+        // Input validation
+        TORCH_CHECK(dirs.size(-1) == 3,
+                    "dirs last dimension must be 3, got ", dirs.size(-1));
+        TORCH_CHECK(coeffs.size(-1) == 3,
+                    "coeffs last dimension must be 3, got ", coeffs.size(-1));
+        TORCH_CHECK(coeffs.size(-2) >= num_sh_coeffs,
+                    "coeffs K dimension must be at least ", num_sh_coeffs, ", got ", coeffs.size(-2));
+
+        // Get batch dimensions
+        auto batch_dims = dirs.sizes().slice(0, dirs.dim() - 1);
+
+        TORCH_CHECK(dirs.sizes().slice(0, dirs.dim() - 1) == coeffs.sizes().slice(0, coeffs.dim() - 2),
+                    "dirs and coeffs batch dimensions must match");
+
+        if (masks.defined()) {
+            TORCH_CHECK(masks.sizes() == batch_dims,
+                        "masks must match dirs batch dims, got ", masks.sizes());
+        }
+
+        // Device checks
+        TORCH_CHECK(dirs.is_cuda(), "dirs must be on CUDA");
+        TORCH_CHECK(coeffs.is_cuda(), "coeffs must be on CUDA");
+        TORCH_CHECK(sh_degree_tensor.is_cuda(), "sh_degree_tensor must be on CUDA");
+        if (masks.defined()) {
+            TORCH_CHECK(masks.is_cuda(), "masks must be on CUDA");
+        }
+
+        // Ensure tensors are contiguous
+        dirs = dirs.contiguous();
+        coeffs = coeffs.contiguous();
+        if (masks.defined()) {
+            masks = masks.contiguous();
+        } else {
+            // Create default masks (all true) with proper shape
+            masks = torch::ones(batch_dims, torch::TensorOptions().dtype(torch::kBool).device(dirs.device()));
+        }
+        auto batch_dims_vec = dirs.sizes().vec();
+        auto original_shape = batch_dims_vec;
+        original_shape[original_shape.size() - 1] = 3;
+        const int64_t num_gaussians = dirs.numel() / 3;
+        // Flatten batch dimensions for CUDA kernel
+        //auto dirs_flat = dirs.reshape({-1, 3});
+        //auto coeffs_flat = coeffs.reshape({-1, coeffs.size(-2), 3});
+        //auto masks_flat = masks.reshape({-1});
+        // Reshape inputs for the kernel: [..., D] -> [1, N, D]
+        auto dirs_reshaped = dirs.reshape({1, num_gaussians, 3});
+        auto coeffs_reshaped = coeffs.reshape({1, num_gaussians, coeffs.size(-2), 3});
+
+        // Flatten batch dimensions for CUDA kernel
+        auto dirs_flat = dirs.reshape({-1, 3});
+        auto coeffs_flat = coeffs.reshape({-1, coeffs.size(-2), 3});
+        auto masks_flat = masks.reshape({-1});
+        // Call spherical harmonics forward - pass FULL coeffs!
+        auto colors =  gsplat::spherical_harmonics_fwd(sh_degree, dirs_flat, coeffs_flat, masks_flat);
+
+
+        auto means3D_no_cam_dim = means3D;
+        if (means3D.dim() == 3 && means3D.size(0) == 1) {
+            means3D_no_cam_dim = means3D.squeeze(0);
+        }
+
+        // Reshape output back to original batch dimensions
+        auto output_shape = dirs.sizes().vec();
+        output_shape[output_shape.size() - 1] = 3; // Ensure last dimension is 3
+        colors = colors.reshape(output_shape).contiguous();
+
+        TORCH_CHECK(colors.is_cuda(), "colors must be on CUDA after SH computation");
+
+        // Save for backward - save everything as-is
+        //ctx->save_for_backward({dirs, coeffs, masks});
+        ctx.dirs = dirs;
+        ctx.coeffs = coeffs;
+        ctx.masks = masks;
+        ctx.sh_degree = sh_degree;
+        ctx.num_bases = coeffs.size(-2);
+        //ctx->saved_data["sh_degree"] = sh_degree;
+        //ctx->saved_data["num_bases"] = coeffs.size(-2); // Save the full K dimension
+
+        return {colors};
+    }

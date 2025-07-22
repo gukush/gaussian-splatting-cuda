@@ -42,9 +42,18 @@ struct LocalNewtonContext {
     // ==================================
     // SH DERIVATIVES (w.r.t. 3D position p_k)
     // ==================================
+    torch::Tensor d_c_ck;         // [C, N,  3] I think?
     torch::Tensor d_cSH_dp;      // [C, N, 3, 3] - Jacobian ∂c̃/∂p
     torch::Tensor H_cSH_dp;      // [C, N, 3, 3, 3] - Hessian ∂²c̃/∂p²
 
+    // ==================================
+    // SH Intermediates
+    // ==================================
+    torch::Tensor dirs;
+    torch::Tensor coeffs;
+    torch::Tensor masks;
+    torch::Tensor sh_degree;
+    torch::Tensor num_bases;
     // ==================================
     // ROTATION & SCALING DERIVATIVES
     // ==================================
@@ -60,4 +69,17 @@ struct LocalNewtonContext {
     torch::Tensor render_alphas;
     torch::Tensor dL_d_color_img;
     torch::Tensor H_L_color_img;;
+    //===================================
+    // FINAL DERIVATIVES AND HESSIANS (merged due to overshoot prevention)
+    //===================================
+    torch::Tensor dL_d_pos;
+    torch::Tensor H_L_pos;
+    torch::Tensor dL_d_scale;
+    torch::Tensor H_L_scale;
+    torch::Tensor dL_d_rot;
+    torch::Tensor H_L_rot;
+    torch::Tensor dL_d_opacity;
+    torch::Tensor H_L_opacity;
+    torch::Tensor dL_d_color;
+    torch::Tensor H_L_color;
 };

@@ -18,6 +18,8 @@ public:
            int width, int height,
            int uid);
 
+    // new constructor for resizing
+    Camera(const Camera& other, int new_width, int new_height);
     // Delete copy, allow move
     Camera(const Camera&) = delete;
     Camera& operator=(const Camera&) = delete;
