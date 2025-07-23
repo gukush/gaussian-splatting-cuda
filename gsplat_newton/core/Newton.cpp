@@ -1,3 +1,4 @@
+#include "core/splat_data.hpp"
 #include "gsplat_newton/Newton.h"
 #include "Common.h"
 #include "gsplat_newton/kernels.hpp" // User's wrappers

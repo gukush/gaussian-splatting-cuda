@@ -20,7 +20,7 @@ namespace gsplat = ::gsplat;
         int sh_degree,
         const torch::Tensor& dirs,
         const torch::Tensor& coeffs,
-        const torch::Tensor& masks = {},
+        const torch::Tensor& masks,
         LocalNewtonContext& context) {
 
         // Validate inputs
@@ -285,7 +285,6 @@ RenderOutput rasterize_newton_step(
     auto isect_offsets = gsplat::intersect_offset(std::get<1>(isect_results), 1, tile_width, tile_height);
     const auto tiles_per_gauss = std::get<0>(isect_results);
     const auto isect_ids = std::get<1>(isect_results);
-    const auto flatten_ids = std::get<2>(isect_results);
 
     TORCH_CHECK(tiles_per_gauss.is_cuda(), "tiles_per_gauss must be on CUDA");
     TORCH_CHECK(isect_ids.is_cuda(), "isect_ids must be on CUDA");

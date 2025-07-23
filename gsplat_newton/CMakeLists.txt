@@ -8,7 +8,7 @@ set(GSN_SOURCES
     core/kernels.cpp
     core/local_newton_trainer.cpp
     core/newton_functions.cpp
-    core/rasterizer_netwon.cpp
+    core/rasterizer_newton.cpp
     #core/rasterizer_newton_old.cpp
 
     # CUDA files from cuda/

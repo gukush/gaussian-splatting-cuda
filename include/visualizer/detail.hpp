@@ -3,7 +3,7 @@
 #include "core/camera.hpp"
 #include "core/image_io.hpp"
 #include "core/rasterizer.hpp"
-#include "core/trainer.hpp"
+#include "core/itrainer.hpp"
 #include "visualizer/renderer.hpp"
 // clang-format off
 // CRITICAL: GLAD must be included before GLFW to avoid OpenGL header conflicts
@@ -136,7 +136,7 @@ namespace gs {
         GSViewer(std::string title, int width, int height);
         ~GSViewer();
 
-        void setTrainer(Trainer* trainer);
+        void setTrainer(ITrainer* trainer);
 
         void drawFrame();
 
@@ -154,7 +154,7 @@ namespace gs {
     private:
         std::shared_ptr<RenderingConfig> config_;
 
-        Trainer* trainer_;
+        ITrainer* trainer_;
 
         // Control button states
         bool show_control_panel_ = true;

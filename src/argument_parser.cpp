@@ -15,6 +15,11 @@ namespace {
 
     const std::set<std::string> VALID_RENDER_MODES = {"RGB", "D", "ED", "RGB_D", "RGB_ED"};
 
+    static const std::set<std::string> VALID_TRAINER_TYPES = {
+        "standard",
+        "local-newton"
+    };
+
     void scale_steps_vector(std::vector<size_t>& steps, size_t scaler) {
         std::set<size_t> unique_steps(steps.begin(), steps.end());
         for (const auto& step : steps) {
@@ -49,6 +54,7 @@ namespace {
         ::args::ValueFlag<int> steps_scaler(parser, "steps_scaler", "Scale training steps by factor", {"steps-scaler"});
         ::args::ValueFlag<int> sh_degree_interval(parser, "sh_degree_interval", "SH degree interval", {"sh-degree-interval"});
         ::args::ValueFlag<std::string> render_mode(parser, "render_mode", "Render mode: RGB, D, ED, RGB_D, RGB_ED", {"render-mode"});
+        ::args::ValueFlag<std::string> trainer_type(parser, "trainer_type", "Optimization type: standard (autograd with adam) or local-newton", {"trainer-type"});
 
         // Optional flag arguments
         ::args::Flag use_bilateral_grid(parser, "bilateral_grid", "Enable bilateral grid filtering", {"bilateral-grid"});
@@ -140,6 +146,16 @@ namespace {
                 return ERROR_EXIT_CODE;
             }
             opt.render_mode = mode;
+        }
+
+        if (trainer_type) {
+            auto t = ::args::get(trainer_type);
+            if (VALID_TRAINER_TYPES.count(t) == 0) {
+                        std::cerr << "ERROR: Invalid trainer-type '" << t
+                        << "'. Valid options are: standard, local-newton\n";
+                    return ERROR_EXIT_CODE;
+            }
+            opt.trainer_type = t;
         }
 
         return SUCCESS_EXIT_CODE;

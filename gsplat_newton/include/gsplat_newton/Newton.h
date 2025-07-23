@@ -3,7 +3,7 @@
 // This file defines the interface for the local Newton optimization's backward and update steps.
 // =================================================================================
 #pragma once
-
+#include "core/splat_data.hpp"
 #include <ATen/core/Tensor.h>
 #include <tuple>
 #include "gsplat_newton/local_newton_context.hpp" // Include the user's context struct definition

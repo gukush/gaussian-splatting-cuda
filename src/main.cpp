@@ -3,6 +3,8 @@
 #include "core/mcmc.hpp"
 #include "core/parameters.hpp"
 #include "core/trainer.hpp"
+#include "core/standard_trainer.hpp"
+#include "gsplat_newton/local_newton_trainer.hpp"
 #include "visualizer/detail.hpp"
 #include <iostream>
 #include <memory>
@@ -38,7 +40,13 @@ int main(int argc, char* argv[]) {
         //----------------------------------------------------------------------
         // 6. Create trainer
         //----------------------------------------------------------------------
-        auto trainer = std::make_unique<gs::Trainer>(dataset, std::move(strategy), params);
+        std::unique_ptr<gs::ITrainer> trainer;
+        if (params.optimization.trainer_type == "local-newton") {
+            trainer = std::make_unique<gs::LocalNewtonTrainer>(dataset, std::move(strategy), params);
+        } else {
+            trainer = std::make_unique<gs::StandardTrainer>(dataset, std::move(strategy), params);
+        }
+        //auto trainer = std::make_unique<gs::Trainer>(dataset, std::move(strategy), params);
 
         //----------------------------------------------------------------------
         // 7. Start training based on visualization mode

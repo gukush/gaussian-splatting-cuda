@@ -265,6 +265,7 @@ set(MAIN_LINK_LIBRARIES
         gaussian_host
         gaussian_kernels
         gsplat_backend
+        gsplat_newton_backend
         Python3::Python
         ${OPENGL_LIBRARIES}
         CUDA::cudart

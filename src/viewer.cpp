@@ -238,7 +238,7 @@ namespace gs {
         std::cout << "GSViewer destroyed." << std::endl;
     }
 
-    void GSViewer::setTrainer(Trainer* trainer) {
+    void GSViewer::setTrainer(ITrainer* trainer) {
         trainer_ = trainer;
     }
 
