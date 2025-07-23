@@ -81,7 +81,8 @@ set(HOST_SOURCES
         src/colmap_reader.cpp
         src/parameters.cpp
         src/splat_data.cpp
-        src/trainer.cpp
+        src/itrainer.cpp
+        src/standard_trainer.cpp
         src/argument_parser.cpp
         src/rasterizer.cpp
         src/metrics.cpp

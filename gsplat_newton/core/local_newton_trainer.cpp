@@ -1,7 +1,10 @@
+#include "core/splat_data.hpp"
 #include "gsplat_newton/local_newton_trainer.hpp"
 #include "gsplat_newton/rasterizer_newton.hpp"
+#include "gsplat_newton/kernels.hpp"
 #include "kernels/fused_ssim.cuh"
 #include "visualizer/detail.hpp"
+#include "gsplat_newton/Newton.h"
 #include <chrono>
 #include <iostream>
 #include <numeric>
@@ -14,27 +17,74 @@ namespace gs {
         return image.dim() == 3 ? image.unsqueeze(0) : image;
     }
 
-    void Trainer::initialize_bilateral_grid() {
-        if (!params_.optimization.use_bilateral_grid) {
-            return;
-        }
-
-        bilateral_grid_ = std::make_unique<gs::BilateralGrid>(
-            train_dataset_size_,
-            params_.optimization.bilateral_grid_X,
-            params_.optimization.bilateral_grid_Y,
-            params_.optimization.bilateral_grid_W);
-
-        bilateral_grid_optimizer_ = std::make_unique<torch::optim::Adam>(
-            std::vector<torch::Tensor>{bilateral_grid_->parameters()},
-            torch::optim::AdamOptions(params_.optimization.bilateral_grid_lr)
-                .eps(1e-15));
+    static torch::Tensor spherical_distance(const torch::Tensor& v1, const torch::Tensor& v2) {
+        // Normalize vectors to ensure they are on the unit sphere
+        auto v1_norm = v1 / v1.norm();
+        auto v2_norm = v2 / v2.norm();
+        // The angle is acos of the dot product
+        return torch::acos(torch::dot(v1_norm, v2_norm));
     }
 
-    std::tuple<torch::Tensor,torch::Tensor,torch::Tensor> Trainer::compute_loss_grads(const RenderOutput& render_output,
-                                        const torch::Tensor& gt_image,
-                                        const SplatData& splatData,
-                                        const param::OptimizationParameters& opt_params) {
+    static torch::Tensor get_projected_camera_positions(
+        const std::vector<std::shared_ptr<Camera>>& cameras,
+        const SplatData& model) {
+
+        // 1. Estimate scene center and bounding sphere
+        torch::Tensor scene_center = model.get_means().mean(/*dim=*/0);
+
+        std::vector<torch::Tensor> projected_positions;
+        projected_positions.reserve(cameras.size());
+
+        for (const auto& cam : cameras) {
+            // 2. Project camera poses to the surface of the bounding sphere
+            const auto& c2w_matrix = cam->world_view_transform();
+            torch::Tensor cam_pos = c2w_matrix.index({0, torch::indexing::Slice(0, 3), 3});
+            torch::Tensor centered_pos = cam_pos - scene_center;
+            // Project by normalizing the vector from the scene center to the camera
+            projected_positions.push_back(centered_pos / centered_pos.norm());
+        }
+
+        return torch::stack(projected_positions, 0);
+    }
+
+    LocalNewtonTrainer::LocalNewtonTrainer(std::shared_ptr<CameraDataset> dataset,
+                                         std::unique_ptr<IStrategy> strategy,
+                                         const param::TrainingParameters& params)
+        : ITrainer(dataset, std::move(strategy), params) {
+
+        // Initialize Newton-specific components
+        initialize_newton_components(dataset);
+    }
+    /*
+    static torch::Tensor get_camera_positions(const std::vector<std::shared_ptr<Camera>>& cameras) {
+        std::vector<torch::Tensor> positions;
+        positions.reserve(cameras.size());
+        for (const auto* cam : cameras) {
+            positions.push_back(cam.);
+        }
+        return torch::stack(positions, 0);
+    }
+    */
+
+    void LocalNewtonTrainer::initialize_newton_components(std::shared_ptr<CameraDataset> dataset) {
+        // Initialize camera KNN using spherical distance as the metric, inspired by the paper.
+        auto projected_camera_positions = get_projected_camera_positions(
+            dataset->get_cameras(),
+            strategy_->get_model()
+        );
+
+        // The CameraKNN class should be initialized with these projected positions
+        // and use a spherical distance metric for finding neighbors.
+        camera_knn_ = std::make_unique<gs::CameraKNN>(projected_camera_positions, true); // Assuming a bool flag enables spherical distance
+        std::cout << "Camera KNN initialized for Newton trainer using spherical distance." << std::endl;
+    }
+
+    std::tuple<torch::Tensor, torch::Tensor, torch::Tensor> LocalNewtonTrainer::compute_loss_grads(
+        const RenderOutput& render_output,
+        const torch::Tensor& gt_image,
+        const SplatData& splatData,
+        const param::OptimizationParameters& opt_params) {
+
         // Ensure images have same dimensions
         torch::Tensor rendered = render_output.image;
         torch::Tensor gt = gt_image;
@@ -45,148 +95,48 @@ namespace gs {
 
         TORCH_CHECK(rendered.sizes() == gt.sizes(), "ERROR: size mismatch – rendered ", rendered.sizes(), " vs. ground truth ", gt.sizes());
 
+        // Constants for SSIM (these should be defined elsewhere or passed as parameters)
+        const float C1 = 0.01f * 0.01f;
+        const float C2 = 0.03f * 0.03f;
+        const bool train = true;
+
         torch::Tensor ssim_map, mu1, mu2, s1, s2, s12;
         // CALL APPROPRIATE SSIM LOSS KERNEL
-        std::tie(ssim_map, mu1, mu2, s1, s2, s12) = fusedssim_LN(C1,C2,rendered,gt,train);
-        auto dL_dmap = torch::full_like(ssim_map, -1.0f / (float)(ssim_map.numel()));
+        std::tie(ssim_map, mu1, mu2, s1, s2, s12) = gsplat_newton::fusedssim_LN(C1, C2, rendered, gt, train);
 
-        //MSE part
+        // MSE part
         auto diff = rendered - gt;
-        auto mse  = diff.pow(2).mean();
+        auto mse = diff.pow(2).mean();
 
-        auto loss = opt_params.lambda_dssim * (1.0f - ssim_map.mean())+(1-opt_params.lambda_dssim)*mse;
+        auto loss = opt_params.lambda_dssim * (1.0f - ssim_map.mean()) + (1 - opt_params.lambda_dssim) * mse;
         int64_t numel = ssim_map.numel();
         auto dL_dmap = torch::full_like(ssim_map, -1.0f / float(numel));
 
-        auto dL_mse = (1-opt_params.lambda_dssim) * 2.0f * diff / float(numel);
+        auto dL_mse = (1 - opt_params.lambda_dssim) * 2.0f * diff / float(numel);
+
         // CALL BACKWARD KERNEL
-        torch::Tensor dL_c, H_L_c;
-        std::tie(dL_ssim, H_ssim) = fusedssim_backward_LN(
+        torch::Tensor dL_ssim, H_ssim;
+        std::tie(dL_ssim, H_ssim) = gsplat_newton::fusedssim_backward_LN(
             C1, C2,
             rendered, gt,      // inputs
             dL_dmap,          // upstream grad on the map
             mu1, mu2, s1, s2, s12
         );
+
+        float mse_weight = 1 - opt_params.lambda_dssim;
         float H_mse_const = mse_weight * 2.0f / float(numel);
         auto H_mse = torch::full_like(H_ssim, H_mse_const);
 
-        auto dL_c   = dL_ssim + dL_mse;
-        auto H_L_c  = H_ssim  + H_mse;
-        return {loss, d_L_c, H_L_c};
+        auto dL_c = dL_ssim + dL_mse;
+        auto H_L_c = H_ssim + H_mse;
+
+        return {loss, dL_c, H_L_c};
     }
 
-    Trainer::Trainer(std::shared_ptr<CameraDataset> dataset,
-                     std::unique_ptr<IStrategy> strategy,
-                     const param::TrainingParameters& params)
-        : strategy_(std::move(strategy)),
-          params_(params) {
-
-        if (!torch::cuda::is_available()) {
-            throw std::runtime_error("CUDA is not available – aborting.");
-        }
-
-        // Handle dataset split based on evaluation flag
-        if (params.optimization.enable_eval) {
-            // Create train/val split
-            train_dataset_ = std::make_shared<CameraDataset>(
-                dataset->get_cameras(), params.dataset, CameraDataset::Split::TRAIN);
-            val_dataset_ = std::make_shared<CameraDataset>(
-                dataset->get_cameras(), params.dataset, CameraDataset::Split::VAL);
-
-
-            // Add camera kNN
-            auto camera_positions = get_camera_positions(dataset->get_cameras());
-            train_dataset_->set_camera_knn(std::make_unique<gs::CameraKNN>(camera_positions));
-            val_dataset_->set_camera_knn(std::make_unique<gs::CameraKNN>(camera_positions));
-            std::cout << "Created train/val split: "
-                      << train_dataset_->size().value() << " train, "
-                      << val_dataset_->size().value() << " val images" << std::endl;
-        } else {
-            // Use all images for training
-            train_dataset_ = dataset;
-            val_dataset_ = nullptr;
-
-            std::cout << "Using all " << train_dataset_->size().value()
-                      << " images for training (no evaluation)" << std::endl;
-        }
-
-        train_dataset_size_ = train_dataset_->size().value();
-
-        auto camera_positions = get_camera_positions(dataset->get_cameras());
-        camera_knn_ = std::make_unique<gs::CameraKNN>(camera_positions);
-        std::cout << "Camera KNN initialized for trainer." << std::endl;
-        strategy_->initialize(params.optimization);
-
-        // Initialize bilateral grid if enabled
-        initialize_bilateral_grid();
-
-        background_ = torch::tensor({0.f, 0.f, 0.f}, torch::TensorOptions().dtype(torch::kFloat32));
-        background_ = background_.to(torch::kCUDA);
-
-        progress_ = std::make_unique<TrainingProgress>(
-            params.optimization.iterations,
-            /*bar_width=*/100);
-
-        // Initialize the evaluator - it handles all metrics internally
-        evaluator_ = std::make_unique<metrics::MetricsEvaluator>(params);
-
-        // Print render mode configuration
-        std::cout << "Render mode: " << params.optimization.render_mode << std::endl;
-
-        std::cout << "Visualization: " << (params.optimization.enable_viz ? "enabled" : "disabled") << std::endl;
-    }
-
-    Trainer::~Trainer() {
-        // Ensure training is stopped
-        stop_requested_ = true;
-    }
-
-    GSViewer* Trainer::create_and_get_viewer() {
-        if (!params_.optimization.enable_viz) {
-            return nullptr;
-        }
-
-        if (!viewer_) {
-            viewer_ = std::make_unique<GSViewer>("GS-CUDA", 1280, 720);
-            viewer_->setTrainer(this);
-        }
-
-        return viewer_.get();
-    }
-
-    void Trainer::handle_control_requests(int iter) {
-        // Handle pause/resume
-        if (pause_requested_.load() && !is_paused_.load()) {
-            is_paused_ = true;
-            progress_->pause();
-            std::cout << "\nTraining paused at iteration " << iter << std::endl;
-            std::cout << "Click 'Resume Training' to continue." << std::endl;
-        } else if (!pause_requested_.load() && is_paused_.load()) {
-            is_paused_ = false;
-            progress_->resume(iter, current_loss_, static_cast<int>(strategy_->get_model().size()));
-            std::cout << "\nTraining resumed at iteration " << iter << std::endl;
-        }
-
-        // Handle save request
-        if (save_requested_.load()) {
-            save_requested_ = false;
-            std::cout << "\nSaving checkpoint at iteration " << iter << "..." << std::endl;
-            strategy_->get_model().save_ply(params_.dataset.output_path / "checkpoints", iter, /*join=*/true);
-            std::cout << "Checkpoint saved to " << (params_.dataset.output_path / "checkpoints").string() << std::endl;
-        }
-
-        // Handle stop request - this permanently stops training
-        if (stop_requested_.load()) {
-            std::cout << "\nStopping training permanently at iteration " << iter << "..." << std::endl;
-            std::cout << "Saving final model..." << std::endl;
-            strategy_->get_model().save_ply(params_.dataset.output_path, iter, /*join=*/true);
-            is_running_ = false;
-        }
-    }
-
-    bool Trainer::train_step(int iter, Camera* cam, torch::Tensor gt_image, RenderMode render_mode) {
+    bool LocalNewtonTrainer::train_step(int iter, Camera* cam, torch::Tensor gt_image, RenderMode render_mode) {
         current_iteration_ = iter;
         LocalNewtonContext ctx;
+
         // Check control requests at the beginning
         handle_control_requests(iter);
 
@@ -205,21 +155,6 @@ namespace gs {
         if (stop_requested_) {
             return false;
         }
-        // TODO MODIFY THE RASTERIZE TO USE NEWTON RASTERIZE WHICH ALSO TAKES NEWTON CONTEXT AS ARGUMENT.
-        // Use the render mode from parameters
-        // USE DIFFERENT RASTERIZE and pass ctx to it
-        /*
-        auto render_fn = [this, &cam, render_mode]() {
-            return gs::rasterize(
-                *cam,
-                strategy_->get_model(),
-                background_,
-                1.0f,
-                false,
-                false,
-                render_mode);
-        };
-        */
 
         // --- Example of how to get nearest neighbors ---
         if (iter % 1000 == 0) { // Example: print every 1000 iterations
@@ -233,17 +168,17 @@ namespace gs {
             }
         }
         // --- End of example ---
-        auto render_fn = [this, &cam, render_mod]() {
-            return gs::rasterize_newton_step(
-                *cam,
-                strategy_->get_model(),
-                background_,
-                1.0f,
-                false,
-                false,
-                render_mode
-            );
-        };
+        auto render_fn = [this, &cam, render_mode, gt_image, &ctx]() {
+                return gs::rasterize_newton_step(
+                    *cam,
+                    strategy_->get_model(),
+                    background_,
+                    gt_image,
+                    1.0f,
+                    render_mode,
+                    &ctx
+                );
+            };
 
         RenderOutput r_output;
 
@@ -258,17 +193,18 @@ namespace gs {
         if (bilateral_grid_ && params_.optimization.use_bilateral_grid) {
             r_output.image = bilateral_grid_->apply(r_output.image, cam->uid());
         }
-        // Compute loss using the factored-out function
+
+        // Compute loss using the Newton-specific function
         torch::Tensor loss, dL_c, H_L_c;
-        std::tie(loss, dL_c, H_L_c) = compute_loss(r_output,
-                                          gt_image,
-                                          strategy_->get_model(),
-                                          params_.optimization);
+        std::tie(loss, dL_c, H_L_c) = compute_loss_grads(r_output,
+                                                         gt_image,
+                                                         strategy_->get_model(),
+                                                         params_.optimization);
 
         current_loss_ = loss.item<float>();
 
-        // loss.backward(); WE USE LOCAL NEWTON!
-        local_newton_backward(
+        // Use local Newton instead of loss.backward()
+        gsplat_newton::local_newton_backward(
             ctx,
             strategy_->get_model(),
             static_cast<int>(cam->image_width()),
@@ -276,27 +212,31 @@ namespace gs {
         );
 
         // Here we would need to do the overshoot prevention.
-        // but it requires 2 smaller images to be completely iteratet in the same manner.
+        // but it requires 2 smaller images to be completely iterated in the same manner.
         auto neighbors = camera_knn_->find_neighbors(cam->uid(), 3);
         for(int n_idx: neighbors) {
-            auto& neighbor_cam = train_dataset_->get(n_idx);
+            auto neighbor_cam_from_set = train_dataset_->get(n_idx);
+            auto& neighbor_cam = neighbor_cam_from_set.data.camera;
             const int downsample_factor = 3;
             int low_res_h = neighbor_cam->image_height() / downsample_factor;
             int low_res_w = neighbor_cam->image_width() / downsample_factor;
             Camera temp_neighbor_cam(*neighbor_cam, low_res_w, low_res_h);
             LocalNewtonContext tmp_ctx;
             RenderOutput tmp_r_output;
-            auto tmp_render_fn = [this, &cam, render_mod]() {
-            return gs::rasterize_newton_step(
-                *cam,
-                strategy_->get_model(),
-                background_,
-                1.0f,
-                false,
-                false,
-                render_mode
-            );
-        };
+            auto tmp_image = neighbor_cam_from_set.target;
+
+            auto tmp_render_fn = [this, &temp_neighbor_cam, render_mode, tmp_image, &tmp_ctx]() {
+                return gs::rasterize_newton_step(
+                    temp_neighbor_cam,
+                    strategy_->get_model(),
+                    background_,
+                    tmp_image,
+                    1.0f,
+                    render_mode,
+                    &tmp_ctx
+                );
+            };
+
             if (viewer_) {
                 std::lock_guard<std::mutex> lock(viewer_->splat_mtx_);
                 tmp_r_output = tmp_render_fn();
@@ -304,12 +244,13 @@ namespace gs {
                 tmp_r_output = tmp_render_fn();
             }
 
-            local_newton_backward(
-            tmp_ctx,
-            strategy_->get_model(),
-            static_cast<int>(temp_neighbor_cam->image_width()),
-            static_cast<int>(temp_neighbor_cam->image_height())
-        );
+            gsplat_newton::local_newton_backward(
+                tmp_ctx,
+                strategy_->get_model(),
+                static_cast<int>(temp_neighbor_cam.image_width()),
+                static_cast<int>(temp_neighbor_cam.image_height())
+            );
+
             // aggregate hessians and gradients
             ctx.dL_d_pos += tmp_ctx.dL_d_pos;
             ctx.H_L_pos  += tmp_ctx.H_L_pos;
@@ -324,10 +265,10 @@ namespace gs {
         }
 
         // --- Stage 3: Solve Systems, Backproject, and Apply Updates ---
-        solve_and_update(
+        gsplat_newton::solve_and_update(
             ctx,
             strategy_->get_model(),
-            static_cast<int>(viewpoint_camera->image_width()),
+            static_cast<int>(cam->image_width()),
             static_cast<int>(cam->image_height())
         );
 
@@ -394,7 +335,7 @@ namespace gs {
         return iter < params_.optimization.iterations && !stop_requested_;
     }
 
-    void Trainer::train() {
+    void LocalNewtonTrainer::train() {
         is_running_ = false; // Don't start running until notified
         training_complete_ = false;
 

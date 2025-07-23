@@ -36,6 +36,7 @@ set_target_properties(gsplat_newton_backend PROPERTIES
 # Tell other targets where to find this library's public headers
 target_include_directories(gsplat_newton_backend
     PUBLIC
+        ${CMAKE_BINARY_DIR}/include
         ${CMAKE_CURRENT_SOURCE_DIR}/include
         ${CMAKE_SOURCE_DIR}/include
         ${CMAKE_SOURCE_DIR}/gsplat

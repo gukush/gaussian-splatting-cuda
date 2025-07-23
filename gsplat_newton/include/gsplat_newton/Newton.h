@@ -32,7 +32,7 @@ namespace gsplat_newton {
  * @param image_width The width of the rendered image.
  * @param image_height The height of the rendered image.
  */
-void local_newton_backward_and_update(
+void local_newton_backward(
     const LocalNewtonContext& context,
     at::Tensor& means,
     at::Tensor& scales,
@@ -45,6 +45,20 @@ void local_newton_backward_and_update(
     const at::Tensor& last_ids,
     const at::Tensor& tile_offsets,
     const at::Tensor& flatten_ids,
+    uint32_t image_width,
+    uint32_t image_height
+);
+
+void local_newton_backward(
+    LocalNewtonContext& context,
+    SplatData& gaussian_model,
+    uint32_t image_width,
+    uint32_t image_height
+);
+
+void solve_and_update(
+    const LocalNewtonContext& context,
+    SplatData& gaussian_model,
     uint32_t image_width,
     uint32_t image_height
 );

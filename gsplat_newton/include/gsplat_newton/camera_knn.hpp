@@ -34,7 +34,7 @@ namespace gs {
 
     class CameraKNN {
     public:
-        CameraKNN(const torch::Tensor& camera_positions);
+        CameraKNN(const torch::Tensor& camera_positions, bool is_spherical);
 
         // Find the k nearest neighbors for a given camera index
         std::vector<int> find_neighbors(int camera_idx, int k) const;

@@ -10,7 +10,7 @@
 // Forward declarations for core data structures if needed
 namespace gs {
     struct RenderOutput;
-    class SplatData;
+//    class SplatData;
 }
 
 namespace at {
@@ -276,40 +276,41 @@ assemble_newton_derivatives(
     const torch::Tensor& camera_pos
 );
 
+
 /**
  * @brief Solves the local Newton system and updates the 3D positions of the Gaussians.
  * @param context The context struct containing the final position gradients and Hessians.
  * The underlying SplatData within the context will be updated.
  */
-void update_position(LocalNewtonContext& context, SplatData& model);
+//void update_position(LocalNewtonContext& context, SplatData& model);
 
 /**
  * @brief Solves the local Newton system and updates the scaling parameters.
  * @param context The context struct containing the final scaling gradients and Hessians.
  * The underlying SplatData will be updated.
  */
-void update_scaling(LocalNewtonContext& context, SplatData& model);
+//void update_scaling(LocalNewtonContext& context, SplatData& model);
 
 /**
  * @brief Solves the local Newton system and updates the rotation quaternions.
  * @param context The context struct containing the final rotation gradients and Hessians.
  * The underlying SplatData will be updated.
  */
-void update_rotation(LocalNewtonContext& context, SplatData& model);
+//void update_rotation(LocalNewtonContext& context, SplatData& model);
 
 /**
  * @brief Solves the local Newton system (with log barrier) and updates the opacities.
  * @param context The context struct containing the final opacity gradients and Hessians.
  * The underlying SplatData will be updated.
  */
-void update_opacity(LocalNewtonContext& context, SplatData& model);
+//void update_opacity(LocalNewtonContext& context, SplatData& model);
 
 /**
  * @brief Solves the local Newton system and updates the SH color coefficients.
  * @param context The context struct containing the final color gradients and Hessians.
  * The underlying SplatData will be updated.
  */
-void update_color(LocalNewtonContext& context, SplatData& model);
+//void update_color(LocalNewtonContext& context, SplatData& model);
 
 
 // launchers:
@@ -500,3 +501,34 @@ template<uint32_t CDIM> void launch_compute_intermediate_derivatives_kernel(    
 } // namespace gsplat_newton
 
 
+
+void launch_fusedssim_backward_LN_kernel(
+    int64_t B, int64_t CH, int64_t H, int64_t W,
+    float C1, float C2,
+    const float* img1,
+    const float* img2,
+    const float* dL_dmap,
+    const float* mu1_map,
+    const float* mu2_map,
+    const float* s1_map,
+    const float* s2_map,
+    const float* s12_map,
+    float* dL_dimg1,
+    float* d2L_dimg1,
+    cudaStream_t stream
+);
+
+void launch_fusedssim_LN_kernel(
+    int64_t B, int64_t CH, int64_t H, int64_t W,
+    float C1, float C2,
+    const float* img1,
+    const float* img2,
+    float* ssim_map,
+    float* mu1_map,
+    float* mu2_map,
+    float* s1_map,
+    float* s2_map,
+    float* s12_map,
+    bool train,
+    cudaStream_t stream
+);

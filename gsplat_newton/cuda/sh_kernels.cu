@@ -352,7 +352,7 @@ __device__ void sh_coeffs_to_color_fast_LN(
         H_dir[5] += w * (c17*(3.f*x2-3.f*y2)*coeffs[17*3+c] + c18_a*4.f*xz*coeffs[18*3+c] + (c19_a*(-3.f*z2)+c19_b)*coeffs[19*3+c] + c18_a*(-4.f*yz)*coeffs[22*3+c] + c17*(-6.f*xy)*coeffs[23*3+c]);
     }
 
-//final_projection:
+final_projection:
     if (v_dir != nullptr) {
         vec3 dir_n = vec3(x, y, z);
         vec3 v_dir_n = vec3(v_x * v_colors_local, v_y * v_colors_local, v_z * v_colors_local);

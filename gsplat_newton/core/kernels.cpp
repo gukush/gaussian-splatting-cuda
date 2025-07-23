@@ -639,3 +639,103 @@ void accumulate_y_2nd_order(
 #undef LAUNCH_ACCUMULATE_KERNEL
 }
 } // namespace gsplat_newton
+
+
+// =====================
+// Losses
+// ====================
+std::tuple<at::Tensor, at::Tensor, at::Tensor,
+           at::Tensor, at::Tensor, at::Tensor>
+fusedssim_LN(
+    float C1,
+    float C2,
+    at::Tensor& img1,
+    at::Tensor& img2,
+    bool train
+) {
+    DEVICE_GUARD(img1);
+    CHECK_INPUT(img1);
+    CHECK_INPUT(img2);
+    TORCH_CHECK(img1.sizes() == img2.sizes(), "img1/img2 size mismatch");
+
+    auto sizes = img1.sizes();
+    int64_t B  = sizes[0],
+            CH = sizes[1],
+            H  = sizes[2],
+            W  = sizes[3];
+
+    // allocate outputs
+    auto ssim_map = at::empty_like(img1);
+    auto mu1_map  = at::empty({B,CH,H,W}, img1.options());
+    auto mu2_map  = at::empty({B,CH,H,W}, img1.options());
+    auto s1_map   = at::empty({B,CH,H,W}, img1.options());
+    auto s2_map   = at::empty({B,CH,H,W}, img1.options());
+    auto s12_map  = at::empty({B,CH,H,W}, img1.options());
+
+    // call the CUDA launcher
+    launch_fusedssim_LN_kernel(
+        B, CH, H, W,
+        C1, C2,
+        img1.data_ptr<float>(),
+        img2.data_ptr<float>(),
+        ssim_map.data_ptr<float>(),
+        train ? mu1_map.data_ptr<float>()  : nullptr,
+        train ? mu2_map.data_ptr<float>()  : nullptr,
+        train ? s1_map.data_ptr<float>()   : nullptr,
+        train ? s2_map.data_ptr<float>()   : nullptr,
+        train ? s12_map.data_ptr<float>()  : nullptr,
+        train,
+        at::cuda::getCurrentCUDAStream()
+    );
+
+    return {ssim_map, mu1_map, mu2_map, s1_map, s2_map, s12_map};
+}
+
+std::tuple<at::Tensor, at::Tensor>
+fusedssim_backward_LN(
+    float C1,
+    float C2,
+    at::Tensor& img1,
+    at::Tensor& img2,
+    at::Tensor& dL_dmap,
+    at::Tensor& mu1_map,
+    at::Tensor& mu2_map,
+    at::Tensor& s1_map,
+    at::Tensor& s2_map,
+    at::Tensor& s12_map
+) {
+    DEVICE_GUARD(img1);
+    CHECK_INPUT(img1);   CHECK_INPUT(img2);
+    CHECK_INPUT(dL_dmap);
+    CHECK_INPUT(mu1_map); CHECK_INPUT(mu2_map);
+    CHECK_INPUT(s1_map);  CHECK_INPUT(s2_map);
+    CHECK_INPUT(s12_map);
+    TORCH_CHECK(img1.sizes() == img2.sizes(), "img1/img2 size mismatch");
+
+    auto sizes = img1.sizes();
+    int64_t B  = sizes[0],
+            CH = sizes[1],
+            H  = sizes[2],
+            W  = sizes[3];
+
+    auto dL_dimg1  = at::empty_like(img1);
+    auto d2L_dimg1 = at::empty_like(img1);
+
+    launch_fusedssim_backward_LN_kernel(
+        B, CH, H, W,
+        C1, C2,
+        img1.data_ptr<float>(),
+        img2.data_ptr<float>(),
+        dL_dmap.data_ptr<float>(),
+        mu1_map.data_ptr<float>(),
+        mu2_map.data_ptr<float>(),
+        s1_map.data_ptr<float>(),
+        s2_map.data_ptr<float>(),
+        s12_map.data_ptr<float>(),
+        dL_dimg1.data_ptr<float>(),
+        d2L_dimg1.data_ptr<float>(),
+        at::cuda::getCurrentCUDAStream()
+    );
+
+    return {dL_dimg1, d2L_dimg1};
+}

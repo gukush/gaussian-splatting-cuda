@@ -260,8 +260,8 @@ __global__ void fusedssimCUDA_LN(
                 if(mu1_map) {
                     mu1_map[global_idx] = out0;
                     mu2_map[global_idx] = out2;
-                    sigma1_map[global_idx] = sigma1_sq;
-                    sigma2_map[global_idx] = sigma2_sq;
+                    sigma1_sq_map[global_idx] = sigma1_sq;
+                    sigma2_sq_map[global_idx] = sigma2_sq;
                     sigma12_map[global_idx] = sigma12;
                 }
             }
@@ -381,6 +381,76 @@ __global__ void fusedssim_color_backwardCUDA_LN(
 }
 
 
+void launch_fusedssim_LN_kernel(
+    int64_t B, int64_t CH, int64_t H, int64_t W,
+    float C1, float C2,
+    const float* img1,
+    const float* img2,
+    float* ssim_map,
+    float* mu1_map,
+    float* mu2_map,
+    float* s1_map,
+    float* s2_map,
+    float* s12_map,
+    bool train,
+    cudaStream_t stream
+) {
+    dim3 grid((W + BLOCK_X - 1) / BLOCK_X,
+              (H + BLOCK_Y - 1) / BLOCK_Y,
+              B);
+    dim3 block(BLOCK_X, BLOCK_Y);
+
+    fusedssimCUDA_LN<<<grid, block, 0, stream>>>(
+        H, W, CH,
+        C1, C2,
+        img1,
+        img2,
+        ssim_map,
+        train ? mu1_map : nullptr,
+        train ? mu2_map : nullptr,
+        train ? s1_map  : nullptr,
+        train ? s2_map  : nullptr,
+        train ? s12_map : nullptr
+    );
+}
+
+// Backward-launcher
+void launch_fusedssim_backward_LN_kernel(
+    int64_t B, int64_t CH, int64_t H, int64_t W,
+    float C1, float C2,
+    const float* img1,
+    const float* img2,
+    const float* dL_dmap,
+    const float* mu1_map,
+    const float* mu2_map,
+    const float* s1_map,
+    const float* s2_map,
+    const float* s12_map,
+    float* dL_dimg1,
+    float* d2L_dimg1,
+    cudaStream_t stream
+) {
+    dim3 grid((W + BLOCK_X - 1) / BLOCK_X,
+              (H + BLOCK_Y - 1) / BLOCK_Y,
+              B);
+    dim3 block(BLOCK_X, BLOCK_Y);
+
+    fusedssim_color_backwardCUDA_LN<<<grid, block, 0, stream>>>(
+        H, W, CH,
+        C1, C2,
+        img1,
+        img2,
+        dL_dmap,
+        mu1_map,
+        mu2_map,
+        s1_map,
+        s2_map,
+        s12_map,
+        dL_dimg1,
+        d2L_dimg1
+    );
+}
+/*
 // ------------------------------------------
 //  C++ Interface (Forward)
 //   Returns (ssim_map, dm_dmu1, dm_dsigma1_sq, dm_dsigma12).
@@ -454,7 +524,7 @@ fusedssim_backward_LN(
     int W = img1.size(3);
 
     auto dL_dimg1 = torch::zeros_like(img1);
-    auto dL2_dimg1 = torch::zeros_like(img1);
+    auto d2L_dimg1 = torch::zeros_like(img1);
 
     dim3 grid((W + BLOCK_X - 1) / BLOCK_X,
               (H + BLOCK_Y - 1) / BLOCK_Y,
@@ -474,5 +544,7 @@ fusedssim_backward_LN(
         dL_dimg1.data_ptr<float>(),
         d2L_dimg1.data_ptr<float>() );
 
-    return dL_dimg1;
+    return std::make_tuple(dL_dimg1,d2L_dimg1);
 }
+
+*/
