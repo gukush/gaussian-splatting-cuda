@@ -618,4 +618,4 @@ __device__ void compute_covariance_derivatives(
         }
     }
 }
-}
+} // namespace gsplat_newton

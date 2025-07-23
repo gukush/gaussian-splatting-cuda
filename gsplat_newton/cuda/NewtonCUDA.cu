@@ -152,4 +152,4 @@ void launch_solve_and_update_all_attributes_kernel(
     C10_CUDA_KERNEL_LAUNCH_CHECK();
 }
 
-} // namespace gsplat
+} // namespace gsplat_newton

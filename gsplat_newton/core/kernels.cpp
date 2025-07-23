@@ -606,39 +606,36 @@ void accumulate_y_2nd_order(
         BS * CDIM * 3 * sizeof(float);  // d2cdy2_batch
 
 #define LAUNCH_ACCUMULATE_KERNEL(CHANNELS) \
-    launch_accumulate_y_2nd_order_kernel<CHANNELS, scalar_t>( \
+    launch_accumulate_y_2nd_order_kernel<CHANNELS>( \
         C, n_isects, packed, \
         masks.has_value() ? masks.value().data_ptr<bool>() : nullptr, \
         image_width, image_height, tile_size, tile_width, tile_height, \
-        tile_offsets.data_ptr<int32_t>(), \
-        flatten_ids.data_ptr<int32_t>(), \
-        last_ids.data_ptr<int32_t>(), \
-        dL_dc.data_ptr<scalar_t>(), \
-        d2L_dc2.data_ptr<scalar_t>(), \
-        dcdy.data_ptr<scalar_t>(), \
-        d2cdy2.data_ptr<scalar_t>(), \
-        grad_y.data_ptr<scalar_t>(), \
-        hess_y.data_ptr<scalar_t>(), \
+        tile_offsets, \
+        flatten_ids, \
+        last_ids, \
+        dL_dc, \
+        d2L_dc2, \
+        dcdy, \
+        d2cdy2, \
+        grad_y, \
+        hess_y, \
         shmem_size \
-    )
+    ); \
 
-    AT_DISPATCH_FLOATING_TYPES(dL_dc.scalar_type(), "accumulate_y_2nd_order", [&] {
-        switch (CDIM) {
-            case 1:
-                LAUNCH_ACCUMULATE_KERNEL(1);
-                break;
-            case 3:
-                // FIXED: This call was empty, now it's populated via the macro
-                LAUNCH_ACCUMULATE_KERNEL(3);
-                break;
-            // Add more cases as needed
-            default:
-                AT_ERROR("Unsupported channel dimension: ", CDIM);
-        }
-    });
+    switch (CDIM) {
+        case 1:
+            LAUNCH_ACCUMULATE_KERNEL(1)
+            break;
+        case 3:
+            LAUNCH_ACCUMULATE_KERNEL(3)
+            break;
+        // Add more cases as needed
+        default:
+            AT_ERROR("Unsupported channel dimension: ", CDIM);
+    }
 #undef LAUNCH_ACCUMULATE_KERNEL
 }
-} // namespace gsplat_newton
+
 
 
 // =====================
@@ -739,3 +736,5 @@ fusedssim_backward_LN(
 
     return {dL_dimg1, d2L_dimg1};
 }
+
+} // namespace gsplat_newton

@@ -175,6 +175,7 @@ namespace gs {
                     background_,
                     gt_image,
                     1.0f,
+                    false,
                     render_mode,
                     &ctx
                 );
@@ -231,6 +232,7 @@ namespace gs {
                     strategy_->get_model(),
                     background_,
                     tmp_image,
+                    false,
                     1.0f,
                     render_mode,
                     &tmp_ctx

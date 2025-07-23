@@ -14,6 +14,7 @@ RenderOutput rasterize_newton_step(
     torch::Tensor& bg_color,
     const torch::Tensor& gt_image,
     float scaling_modifier,
+    bool antialiased,
     RenderMode render_mode,
     LocalNewtonContext* context);
 

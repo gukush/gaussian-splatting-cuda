@@ -159,8 +159,8 @@ ProjectionFunctionForward(
     TORCH_CHECK(settings.is_cuda(),   "settings must be CUDA");
 
     // --- extract settings ---
-    auto width            = settings[0].item<uint32_t>();
-    auto height           = settings[1].item<uint32_t>();
+    auto width            = settings[0].item<int>();
+    auto height           = settings[1].item<int>();
     auto eps2d            = settings[2].item<float>();
     auto near_plane       = settings[3].item<float>();
     auto far_plane        = settings[4].item<float>();
@@ -332,7 +332,7 @@ compute_local_newton_backward(
 
     // SphericalHarmonicsFunction implementation
    std::tuple<torch::Tensor> SphericalHarmonicsForward(
-        LocalNewtonContext& ctx,
+        LocalNewtonContext* ctx,
         torch::Tensor sh_degree_tensor, // [1] containing sh_degree
         torch::Tensor dirs,             // [..., 3]
         torch::Tensor coeffs,           // [..., K, 3]
@@ -413,11 +413,11 @@ compute_local_newton_backward(
 
         // Save for backward - save everything as-is
         //ctx->save_for_backward({dirs, coeffs, masks});
-        ctx.dirs = dirs;
-        ctx.coeffs = coeffs;
-        ctx.masks = masks;
-        ctx.sh_degree = sh_degree;
-        ctx.num_bases = coeffs.size(-2);
+        ctx->dirs = dirs;
+        ctx->coeffs = coeffs;
+        ctx->masks = masks;
+        ctx->sh_degree = sh_degree;
+        ctx->num_bases = coeffs.size(-2);
         //ctx->saved_data["sh_degree"] = sh_degree;
         //ctx->saved_data["num_bases"] = coeffs.size(-2); // Save the full K dimension
 

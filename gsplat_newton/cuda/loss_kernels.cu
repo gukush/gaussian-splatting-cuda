@@ -6,10 +6,11 @@
 
 namespace cg = cooperative_groups;
 
+namespace gsplat_newton {
 // ------------------------------------------
 // Constant Memory for Gaussian Coefficients
 // ------------------------------------------
-namespace {
+
 __constant__ float cGauss[11] = {
     0.001028380123898387f,
     0.0075987582094967365f,
@@ -22,7 +23,7 @@ __constant__ float cGauss[11] = {
     0.036000773310661316f,
     0.0075987582094967365f,
     0.001028380123898387f};
-}
+
 
 // ------------------------------------------
 // Block and Shared Memory Dimensions
@@ -550,3 +551,5 @@ fusedssim_backward_LN(
 }
 
 */
+
+} // namespace gsplat_newton

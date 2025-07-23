@@ -24,6 +24,9 @@ using namespace gsplat;
  * adds to aggregate contributions from different tiles and warps. The outputs of
  * this kernel serve as the direct inputs for the second assembly kernel.
  */
+
+ namespace gsplat_newton {
+
 template <uint32_t CDIM, typename scalar_t>
 __global__ void compute_intermediate_derivatives_kernel(
     const uint32_t C, const uint32_t N, const uint32_t n_isects, const bool packed,
@@ -408,31 +411,31 @@ void launch_compute_intermediate_derivatives_kernel(
 }
 
 // Explicit Instantiation for various color dimensions (CDIM)
-#define __INS__(CDIM)                                                                      \
-    template void launch_compute_intermediate_derivatives_kernel<CDIM>(                      \
-        const bool packed,                                                                 \
-        const at::Tensor means2d,                                                         \
-        const at::Tensor conics,                                                          \
-        const at::Tensor colors,                                                          \
-        const at::Tensor opacities,                                                       \
-        const at::optional<at::Tensor> backgrounds,                                       \
-        const at::optional<at::Tensor> masks,                                             \
-        const uint32_t image_width,                                                        \
-        const uint32_t image_height,                                                       \
-        const uint32_t tile_size,                                                          \
-        const at::Tensor tile_offsets,                                                    \
-        const at::Tensor flatten_ids,                                                     \
-        const at::Tensor render_alphas,                                                   \
-        const at::Tensor last_ids,                                                        \
-        const at::Tensor v_render_colors,                                                 \
-        const at::Tensor v_render_alphas,                                                 \
-        at::Tensor dc_dcSH,                                                               \
-        at::Tensor dc_dG,                                                                 \
-        at::Tensor dG_dmean2d,                                                            \
-        at::Tensor dG_dSigma,                                                             \
-        at::Tensor H_G_mean2d,                                                            \
-        at::Tensor H_G_sigma,                                                             \
-        at::Tensor H_G_mixed,                                                             \
+#define __INS__(CDIM)                                                                   \
+    template void launch_compute_intermediate_derivatives_kernel<CDIM>(                 \
+        const bool packed,                                                              \
+        const at::Tensor means2d,                                                       \
+        const at::Tensor conics,                                                        \
+        const at::Tensor colors,                                                        \
+        const at::Tensor opacities,                                                     \
+        const at::optional<at::Tensor> backgrounds,                                     \
+        const at::optional<at::Tensor> masks,                                           \
+        const uint32_t image_width,                                                     \
+        const uint32_t image_height,                                                    \
+        const uint32_t tile_size,                                                       \
+        const at::Tensor tile_offsets,                                                  \
+        const at::Tensor flatten_ids,                                                   \
+        const at::Tensor render_alphas,                                                 \
+        const at::Tensor last_ids,                                                      \
+        const at::Tensor v_render_colors,                                               \
+        const at::Tensor v_render_alphas,                                               \
+        at::Tensor dc_dcSH,                                                             \
+        at::Tensor dc_dG,                                                               \
+        at::Tensor dG_dmean2d,                                                          \
+        at::Tensor dG_dSigma,                                                           \
+        at::Tensor H_G_mean2d,                                                          \
+        at::Tensor H_G_sigma,                                                           \
+        at::Tensor H_G_mixed,                                                           \
         at::Tensor dc_opac);
 
 __INS__(1)
@@ -456,3 +459,5 @@ __INS__(512)
 __INS__(513)
 
 #undef __INS__
+
+} //namespace gsplat_newton

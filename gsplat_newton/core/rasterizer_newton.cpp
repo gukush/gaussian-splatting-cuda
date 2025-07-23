@@ -21,7 +21,9 @@ namespace gsplat = ::gsplat;
         const torch::Tensor& dirs,
         const torch::Tensor& coeffs,
         const torch::Tensor& masks,
-        LocalNewtonContext& context) {
+        LocalNewtonContext* context,
+        const torch::Tensor& means3D,
+        const torch::Tensor& viewmat) {
 
         // Validate inputs
         TORCH_CHECK((sh_degree + 1) * (sh_degree + 1) <= coeffs.size(-2),
@@ -47,7 +49,9 @@ namespace gsplat = ::gsplat;
             sh_degree_tensor,
             dirs.contiguous(),
             coeffs.contiguous(),
-            masks.defined() ? masks.contiguous() : masks);
+            masks.defined() ? masks.contiguous() : masks,
+            means3D,
+            viewmat);
         return std::get<0>(out);
     }
 
@@ -231,7 +235,9 @@ RenderOutput rasterize_newton_step(
         context->view_dirs, // Input from projection context
         coeffs_flat,
         masks,
-        *context            // Populates SH derivatives in context
+        context,            // Populates SH derivatives in context
+        means3D,
+        viewmat
     );
     auto colors = std::get<0>(colors_tuple);
     // This kernel computes ∂c̃/∂p, ∂²c̃/∂p² using the chain rule - chain rule already computed in the spherical harmonics function

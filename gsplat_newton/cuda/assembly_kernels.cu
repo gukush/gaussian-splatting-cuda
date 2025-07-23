@@ -10,7 +10,7 @@
 
 namespace cg = cooperative_groups;
 using namespace gsplat;
-
+namespace gsplat_newton {
 /**
  * @brief Performs an analytical eigenvalue decomposition for a 2x2 symmetric matrix.
  *
@@ -672,3 +672,6 @@ void launch_assemble_newton_derivatives_kernel(
     // Check for kernel launch errors
     C10_CUDA_KERNEL_LAUNCH_CHECK();
 }
+
+
+} // namespace gsplat_newton

@@ -1,8 +1,5 @@
 #include <cuda_runtime.h>
 #include <math_constants.h>
-
-
-
 #include <ATen/Dispatch.h>
 #include <ATen/core/Tensor.h>
 #include <ATen/cuda/Atomic.cuh>
@@ -16,6 +13,9 @@
 
 namespace cg = cooperative_groups;
 using namespace gsplat;
+
+
+namespace gsplat_newton {
 //-----------------------------------------------------------------------------
 // (1) Accumulate per-gaussian ∂L/∂y_k  and  ∂²L/∂y_k²
 //-----------------------------------------------------------------------------
@@ -238,7 +238,7 @@ compute_y_updates_kernel(
 }
 
 
-template <uint32_t CDIM, typename scalar_t>
+template <uint32_t CDIM>
 void launch_accumulate_y_2nd_order_kernel(
     const uint32_t C,
     const uint32_t n_isects,
@@ -249,15 +249,15 @@ void launch_accumulate_y_2nd_order_kernel(
     const uint32_t tile_size,
     const uint32_t tile_width,
     const uint32_t tile_height,
-    const int32_t* tile_offsets,
-    const int32_t* flatten_ids,
-    const int32_t* last_ids,
-    const scalar_t* dL_dc,
-    const scalar_t* d2L_dc2,
-    const scalar_t* dcdy,
-    const scalar_t* d2cdy2,
-    scalar_t* grad_y,
-    scalar_t* hess_y,
+    const at::Tensor tile_offsets,
+    const at::Tensor flatten_ids,
+    const at::Tensor last_ids,
+    const at::Tensor dL_dc,
+    const at::Tensor d2L_dc2,
+    const at::Tensor dcdy,
+    const at::Tensor d2cdy2,
+    at::Tensor grad_y,
+    at::Tensor hess_y,
     size_t shmem_size
 ) {
     // Configure kernel launch
@@ -265,14 +265,20 @@ void launch_accumulate_y_2nd_order_kernel(
     dim3 grid = {C, tile_height, tile_width};
 
     // Set shared memory configuration
-    cudaFuncSetAttribute(
-        accumulate_y_2nd_order_kernel<CDIM, scalar_t>,
+    if(cudaFuncSetAttribute(
+        accumulate_y_2nd_order_kernel<CDIM, float>,
         cudaFuncAttributeMaxDynamicSharedMemorySize,
         shmem_size
-    );
+    ) != cudaSuccess) {
+      AT_ERROR(
+          "Failed to set maximum shared memory size (requested ",
+          shmem_size,
+          " bytes), try lowering tile_size."
+        );
+    }
 
     // Launch kernel
-    accumulate_y_2nd_order_kernel<CDIM, scalar_t><<<grid, threads, shmem_size, at::cuda::getCurrentCUDAStream()>>>(
+    accumulate_y_2nd_order_kernel<CDIM, float><<<grid, threads, shmem_size, at::cuda::getCurrentCUDAStream()>>>(
         C,
         n_isects,
         packed,
@@ -282,21 +288,68 @@ void launch_accumulate_y_2nd_order_kernel(
         tile_size,
         tile_width,
         tile_height,
-        tile_offsets,
-        flatten_ids,
-        last_ids,
-        dL_dc,
-        d2L_dc2,
-        dcdy,
-        d2cdy2,
-        grad_y,
-        hess_y
+        tile_offsets.data_ptr<int32_t>(),
+        flatten_ids.data_ptr<int32_t>(),
+        last_ids.data_ptr<int32_t>(),
+        dL_dc.data_ptr<float>(),
+        d2L_dc2.data_ptr<float>(),
+        dcdy.data_ptr<float>(),
+        d2cdy2.data_ptr<float>(),
+        grad_y.data_ptr<float>(),
+        hess_y.data_ptr<float>()
     );
 
     // Check for errors
     C10_CUDA_KERNEL_LAUNCH_CHECK();
 }
 
+
+
+#define __INS__(CDIM) \
+template void launch_accumulate_y_2nd_order_kernel<CDIM>( \
+    const uint32_t C,                                     \
+    const uint32_t n_isects,                              \
+    const bool packed,                                    \
+    const bool* masks,                                    \
+    const uint32_t image_width,                           \
+    const uint32_t image_height,                          \
+    const uint32_t tile_size,                             \
+    const uint32_t tile_width,                            \
+    const uint32_t tile_height,                           \
+    const at::Tensor tile_offsets,                        \
+    const at::Tensor flatten_ids,                         \
+    const at::Tensor last_ids,                            \
+    const at::Tensor dL_dc,                               \
+    const at::Tensor d2L_dc2,                             \
+    const at::Tensor dcdy,                                \
+    const at::Tensor d2cdy2,                              \
+    at::Tensor grad_y,                                    \
+    at::Tensor hess_y,                                    \
+    size_t shmem_size                                     \
+);
+
+
+__INS__(1)
+__INS__(2)
+__INS__(3)
+__INS__(4)
+__INS__(5)
+__INS__(8)
+__INS__(9)
+__INS__(16)
+__INS__(17)
+__INS__(32)
+__INS__(33)
+__INS__(64)
+__INS__(65)
+__INS__(128)
+__INS__(129)
+__INS__(256)
+__INS__(257)
+__INS__(512)
+__INS__(513)
+
+#undef __INS__
 
 void launch_compute_y_updates_kernel(
     const uint32_t n_isects,
@@ -323,4 +376,5 @@ void launch_compute_y_updates_kernel(
 
     // Check for errors
     C10_CUDA_KERNEL_LAUNCH_CHECK();
+}
 }

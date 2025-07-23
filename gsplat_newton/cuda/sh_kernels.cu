@@ -10,6 +10,8 @@
 
 using namespace gsplat;
 
+namespace gsplat_newton {
+
 template <typename scalar_t>
 __device__ void chain_rule_color_position_kernel(
     const glm::vec3 &p_k,                 // Input position
@@ -519,3 +521,5 @@ void launch_color_solve_fwd(
     }
   );
 }
+
+} // namespace gsplat_newton

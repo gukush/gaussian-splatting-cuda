@@ -389,18 +389,6 @@ void launch_projection_ewa_3dgs_fused_fwd_kernel_LN(
     at::Tensor d2r_dp2_compact             // [C, N, 18]
 );
 
-void launch_solve_and_update_all_attributes_kernel(
-    const at::Tensor dL_d_pos, const at::Tensor H_L_pos,
-    const at::Tensor dL_d_scale, const at::Tensor H_L_scale,
-    const at::Tensor dL_d_rot, const at::Tensor H_L_rot,
-    const at::Tensor dL_d_opacity, const at::Tensor H_L_opacity,
-    const at::Tensor dL_d_color, const at::Tensor H_L_color,
-    const at::Tensor U_k_bases, const at::Tensor T_k_matrices,
-    at::Tensor means, at::Tensor scales, at::Tensor quats,
-    at::Tensor opacities, at::Tensor sh_coeffs
-);
-
-
 void launch_spherical_harmonics_LN_kernel(
     const uint32_t      degrees_to_use,
     const at::Tensor   dirs,       // [..., 3]
@@ -422,7 +410,7 @@ void launch_chain_rule_color_position_kernel(
 );
 
 
-template <uint32_t CDIM, typename scalar_t>
+template <uint32_t CDIM>
 void launch_accumulate_y_2nd_order_kernel(
     const uint32_t C,
     const uint32_t n_isects,
@@ -433,16 +421,33 @@ void launch_accumulate_y_2nd_order_kernel(
     const uint32_t tile_size,
     const uint32_t tile_width,
     const uint32_t tile_height,
-    const int32_t* tile_offsets,
-    const int32_t* flatten_ids,
-    const int32_t* last_ids,
-    const scalar_t* dL_dc,
-    const scalar_t* d2L_dc2,
-    const scalar_t* dcdy,
-    const scalar_t* d2cdy2,
-    scalar_t* grad_y,
-    scalar_t* hess_y,
+    const at::Tensor tile_offsets,
+    const at::Tensor flatten_ids,
+    const at::Tensor last_ids,
+    const at::Tensor dL_dc,
+    const at::Tensor d2L_dc2,
+    const at::Tensor dcdy,
+    const at::Tensor d2cdy2,
+    at::Tensor grad_y,
+    at::Tensor hess_y,
     size_t shmem_size
+);
+
+void accumulate_y_2nd_order(
+    // MODIFIED: Changed masks to be optional for consistency
+    const at::optional<at::Tensor>& masks,
+    const uint32_t image_width,
+    const uint32_t image_height,
+    const uint32_t tile_size,
+    const at::Tensor tile_offsets,
+    const at::Tensor flatten_ids,
+    const at::Tensor last_ids,
+    const at::Tensor dL_dc,
+    const at::Tensor d2L_dc2,
+    const at::Tensor dcdy,
+    const at::Tensor d2cdy2,
+    at::Tensor grad_y,
+    at::Tensor hess_y
 );
 
 /*
@@ -472,33 +477,32 @@ void launch_compute_y_updates_kernel(
     vec2* delta_y
 );
 
-template<uint32_t CDIM> void launch_compute_intermediate_derivatives_kernel(                      \
+template<uint32_t CDIM> void launch_compute_intermediate_derivatives_kernel(               \
         const bool packed,                                                                 \
-        const at::Tensor &means2d,                                                         \
-        const at::Tensor &conics,                                                          \
-        const at::Tensor &colors,                                                          \
-        const at::Tensor &opacities,                                                       \
-        const at::optional<at::Tensor> &backgrounds,                                       \
-        const at::optional<at::Tensor> &masks,                                             \
+        const at::Tensor means2d,                                                         \
+        const at::Tensor conics,                                                          \
+        const at::Tensor colors,                                                          \
+        const at::Tensor opacities,                                                       \
+        const at::optional<at::Tensor> backgrounds,                                       \
+        const at::optional<at::Tensor> masks,                                             \
         const uint32_t image_width,                                                        \
         const uint32_t image_height,                                                       \
         const uint32_t tile_size,                                                          \
-        const at::Tensor &tile_offsets,                                                    \
-        const at::Tensor &flatten_ids,                                                     \
-        const at::Tensor &render_alphas,                                                   \
-        const at::Tensor &last_ids,                                                        \
-        const at::Tensor &v_render_colors,                                                 \
-        const at::Tensor &v_render_alphas,                                                 \
-        at::Tensor &dc_dcSH,                                                               \
-        at::Tensor &dc_dG,                                                                 \
-        at::Tensor &dG_dmean2d,                                                            \
-        at::Tensor &dG_dSigma,                                                             \
-        at::Tensor &H_G_mean2d,                                                            \
-        at::Tensor &H_G_sigma,                                                             \
-        at::Tensor &H_G_mixed,                                                             \
-        at::Tensor &dc_opac);
+        const at::Tensor tile_offsets,                                                    \
+        const at::Tensor flatten_ids,                                                     \
+        const at::Tensor render_alphas,                                                   \
+        const at::Tensor last_ids,                                                        \
+        const at::Tensor v_render_colors,                                                 \
+        const at::Tensor v_render_alphas,                                                 \
+        at::Tensor dc_dcSH,                                                               \
+        at::Tensor dc_dG,                                                                 \
+        at::Tensor dG_dmean2d,                                                            \
+        at::Tensor dG_dSigma,                                                             \
+        at::Tensor H_G_mean2d,                                                            \
+        at::Tensor H_G_sigma,                                                             \
+        at::Tensor H_G_mixed,                                                             \
+        at::Tensor dc_opac);                                                              \
 
-} // namespace gsplat_newton
 
 
 
@@ -532,3 +536,5 @@ void launch_fusedssim_LN_kernel(
     bool train,
     cudaStream_t stream
 );
+
+} // namespace gsplat_newton

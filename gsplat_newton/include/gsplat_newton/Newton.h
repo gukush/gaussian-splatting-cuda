@@ -78,6 +78,7 @@ void launch_solve_and_update_all_attributes_kernel(
     // Tensors from context needed for backprojection
     const at::Tensor U_k_bases, // Basis for position update
     const at::Tensor T_k_matrices, // Basis for scale update
+    const at::Tensor view_dirs,
     // Gaussian parameters to be updated (in-out)
     at::Tensor means,
     at::Tensor scales,

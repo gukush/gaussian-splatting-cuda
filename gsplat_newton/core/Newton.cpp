@@ -160,24 +160,28 @@ void solve_and_update(
     CHECK_INPUT(quats);
     CHECK_INPUT(opacities);
     CHECK_INPUT(sh_coeffs);
-    auto dL_d_pos = context.dL_d_pos;
-    auto H_L_pos = context.H_L_pos;
-    auto dL_d_scale = context.dL_d_scale;
-    auto H_L_scale = context.H_L_scale;
-    auto dL_d_rot = context.dL_d_rot;
-    auto H_L_rot = context.H_L_rot;
-    auto dL_d_opacity = context.dL_d_opacity;
-    auto H_L_opacity = context.H_L_opacity;
-    auto dL_d_color = context.dL_d_color;
-    auto H_L_color = context.H_L_color;
+    const auto dL_d_pos = context.dL_d_pos;
+    const auto H_L_pos = context.H_L_pos;
+    const auto dL_d_scale = context.dL_d_scale;
+    const auto H_L_scale = context.H_L_scale;
+    const auto dL_d_rot = context.dL_d_rot;
+    const auto H_L_rot = context.H_L_rot;
+    const auto dL_d_opacity = context.dL_d_opacity;
+    const auto H_L_opacity = context.H_L_opacity;
+    const auto dL_d_color = context.dL_d_color;
+    const auto H_L_color = context.H_L_color;
+    const auto d_mean2d_dp = context.d_mean2d_dp;
+    const auto T_matrices = context.T_matrices;
+    const auto view_dirs = context.view_dirs;
     launch_solve_and_update_all_attributes_kernel(
         dL_d_pos, H_L_pos,
         dL_d_scale, H_L_scale,
         dL_d_rot, H_L_rot,
         dL_d_opacity, H_L_opacity,
         dL_d_color, H_L_color,
-        context.d_mean2d_dp, // Basis U_k is implicitly defined by this jacobian
-        context.T_matrices,
+        d_mean2d_dp, // Basis U_k is implicitly defined by this jacobian
+        T_matrices,
+        view_dirs,
         means, scales, quats, opacities, sh_coeffs // Pass by reference to update in-place
     );
 }
