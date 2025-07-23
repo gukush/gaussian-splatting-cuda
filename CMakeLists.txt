@@ -68,6 +68,7 @@ configure_file(
 )
 
 add_subdirectory(gsplat)
+add_subdirectory(gsplat_newton)
 
 # =============================================================================
 # HOST LIBRARY - Compiled with g++ (fast!)
@@ -99,6 +100,7 @@ target_include_directories(gaussian_host
         ${CMAKE_CURRENT_SOURCE_DIR}/include
         ${CMAKE_CURRENT_BINARY_DIR}/include  # For generated config.h
         ${CMAKE_CURRENT_SOURCE_DIR}/gsplat  # Add gsplat headers
+        ${CMAKE_CURRENT_SOURCE_DIR}/gsplat_newton/include # newton module headers
         ${CUDAToolkit_INCLUDE_DIRS}         # Add CUDA headers for interop
         PRIVATE
         ${Python3_INCLUDE_DIRS}
@@ -251,6 +253,7 @@ target_include_directories(${PROJECT_NAME}
         ${CMAKE_CURRENT_SOURCE_DIR}/include
         ${CMAKE_CURRENT_BINARY_DIR}/include  # For generated config.h
         ${CMAKE_CURRENT_SOURCE_DIR}/gsplat
+        ${CMAKE_CURRENT_SOURCE_DIR}/gsplat_newton/include
         ${Python3_INCLUDE_DIRS}
         ${CUDAToolkit_INCLUDE_DIRS}
         ${OPENGL_INCLUDE_DIRS}

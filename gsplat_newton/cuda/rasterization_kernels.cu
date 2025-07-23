@@ -4,15 +4,17 @@
 #include <c10/cuda/CUDAStream.h>
 #include <cooperative_groups.h>
 
-#include "gsplat/Common.h"
-#include "gsplat/Rasterization.h"
-#include "gsplat/Utils.cuh"
+#include "Common.h"
+#include "Rasterization.h"
+#include "Utils.cuh"
 
 
 #include "Common.h"
 #include "Rasterization.h"
 #include "Utils.cuh"
 #include <cooperative_groups.h>
+
+using namespace gsplat;
 /**
  * @brief Kernel 1: Computes and aggregates intermediate derivatives for the
  * Newton-Raphson solver.

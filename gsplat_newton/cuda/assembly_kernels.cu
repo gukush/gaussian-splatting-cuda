@@ -3,7 +3,7 @@
 #include <ATen/cuda/Atomic.cuh>
 #include <c10/cuda/CUDAStream.h>
 #include <cooperative_groups.h>
-
+#include <glm/gtc/matrix_transform.hpp>
 #include "Common.h"
 #include "Rasterization.h"
 #include "Utils.cuh"
@@ -54,6 +54,7 @@ __device__ __forceinline__ void eigen_decomposition_2d(
 
 
 // A 2x3 matrix, useful for the projection Jacobian
+/*
 struct mat2x3 {
     float data[2][3];
 };
@@ -62,7 +63,7 @@ struct mat2x3 {
 struct mat3x2 {
     float data[3][2];
 };
-
+*/
 
 /**
  * @brief Computes the first derivative ∂c/∂pₖ for a single pixel's contribution.
@@ -214,9 +215,9 @@ __device__ __forceinline__ void compute_scaling_hessian(
     // Precompute the 3-vectors for each dSigma_dsk[i]
     float comp[3][3];
     for (int i=0; i<3; i++) {
-        comp[i][0] = dSigma_dsk[i].data[0][0];  // dΣ_xx / ds_i
-        comp[i][1] = dSigma_dsk[i].data[1][1];  // dΣ_yy / ds_i
-        comp[i][2] = dSigma_dsk[i].data[0][1];  // dΣ_xy / ds_i
+        comp[i][0] = dSigma_dsk[i][0][0];  // dΣ_xx / ds_i
+        comp[i][1] = dSigma_dsk[i][1][1];  // dΣ_yy / ds_i
+        comp[i][2] = dSigma_dsk[i][1][0];  // dΣ_xy / ds_i
     }
 
     // Compute full contraction
@@ -233,7 +234,7 @@ __device__ __forceinline__ void compute_scaling_hessian(
                              H_G_sigma[4] * comp[j][1] +
                              H_G_sigma[2] * comp[j][2]);
 
-            hessian_s.data[i][j] = dc_dG * val;
+            hessian_s[j][i] = dc_dG * val;
         }
     }
 }
@@ -353,9 +354,9 @@ __global__ void assemble_newton_derivatives_kernel(
     vec2 *__restrict__ dc_dlambda,
     mat3 *__restrict__ d2c_dlambda2,
     float *__restrict__   dc_dtheta,
-    float *__restrict__   d2c_dtheta2,
-    float *__restrict__  dc_dcolor,
-    float *__restrict__ dc_dsigma
+    float *__restrict__   d2c_dtheta2
+//    float *__restrict__  dc_dcolor,
+//    float *__restrict__ dc_dsigma
 ) {
     const int g_idx = blockIdx.x * blockDim.x + threadIdx.x;
     if (g_idx >= num_gaussians) return;
@@ -370,11 +371,11 @@ __global__ void assemble_newton_derivatives_kernel(
     const float* H_G_mixed = H_G_mixed_totals + g_idx * 6;
 
     vec3 r_k = normalize(camera_pos - p_k[g_idx]);
-    vec3 u_y = normalize(cross(r_k, cross(r_k, vec3(0, 1, 0)));  // Eq. 14
+    vec3 u_y = normalize(cross(r_k, cross(r_k, vec3(0, 1, 0))));  // Eq. 14
     vec3 u_x = normalize(cross(r_k, u_y));
     mat2x3 U_k = {u_x, u_y};
     // Position solve
-    vec3 final_grad = compute_dc_dpk_totals(
+    vec3 final_grad = compute_dc_dpk_local(
         dc_dc_sh, dc_dG, dG_dmean2d, dG_dSigma,
         dc_sh_dp[g_idx], jacobians[g_idx],
         dSigma_dpx[g_idx], dSigma_dpy[g_idx], dSigma_dpz[g_idx]
@@ -439,7 +440,7 @@ __global__ void assemble_newton_derivatives_kernel(
     //dc_dsk[g_idx] = grad_s;
 
     // Compute Hessian ∂²c/∂sₖ²
-    mat3 hessian_s = {{{0}}};
+    mat3 hessian_s(0.0f);
     compute_scaling_hessian(
         dc_dG,
         dG_dSigma,
@@ -451,18 +452,18 @@ __global__ void assemble_newton_derivatives_kernel(
 
         // 3) form the 2×2 Gram matrix M = T Tᵀ and invert it:
     mat2 M;                               // M = T * Tᵀ
-    M[0][0] = dot(T[0],T[0]);
-    M[0][1] = dot(T[0],T[1]);
+    M[0][0] = glm::dot(T_k[0],T_k[0]);
+    M[0][1] = glm::dot(T_k[0],T_k[1]);
     M[1][0] = M[0][1];
-    M[1][1] = dot(T[1],T[1]);
+    M[1][1] = glm::dot(T_k[1],T_k[1]);
     mat2 M_inv = inverse(M);             // your favorite small‐matrix inverse
 
     // 4) compute ∂c/∂λₖ = M⁻¹ * (T * grad_s)
     vec2 grad_lambda;
     {
       vec2 Tgs;
-      Tgs.x = dot(T[0], grad_s);
-      Tgs.y = dot(T[1], grad_s);
+      Tgs.x = glm::dot(T_k[0], grad_s);
+      Tgs.y = glm::dot(T_k[1], grad_s);
       grad_lambda = M_inv * Tgs;
     }
 
@@ -472,9 +473,9 @@ __global__ void assemble_newton_derivatives_kernel(
       for(int j=0;j<2;++j){
         // (T * H_s * Tᵀ)[i][j]
         H_temp[i][j] =
-          T[i].x*(hessian_s[0][0]*T[j].x + hessian_s[0][1]*T[j].y + hessian_s[0][2]*T[j].z)
-        + T[i].y*(hessian_s[1][0]*T[j].x + hessian_s[1][1]*T[j].y + hessian_s[1][2]*T[j].z)
-        + T[i].z*(hessian_s[2][0]*T[j].x + hessian_s[2][1]*T[j].y + hessian_s[2][2]*T[j].z);
+          T_k[i].x*(hessian_s[0][0]*T_k[j].x + hessian_s[0][1]*T_k[j].y + hessian_s[0][2]*T_k[j].z)
+        + T_k[i].y*(hessian_s[1][0]*T_k[j].x + hessian_s[1][1]*T_k[j].y + hessian_s[1][2]*T_k[j].z)
+        + T_k[i].z*(hessian_s[2][0]*T_k[j].x + hessian_s[2][1]*T_k[j].y + hessian_s[2][2]*T_k[j].z);
       }
     mat2 H_lambda = M_inv * (H_temp * M_inv);
     dc_dlambda   [g_idx] = grad_lambda;
@@ -509,8 +510,12 @@ __global__ void assemble_newton_derivatives_kernel(
         d2c_dtheta2[g_idx] = hessian_theta;
     }
      // ========================================================================
-    // Opacity solve (αₖ)
+    // Opacity solve (αₖ) not called here
+    // in compute_intermediate_derivatives_kernel we compute the dc_dopac quantity
+    // which is of our interest here
+    // d2c_dopacity2 is always zero.
     // ========================================================================
+    /*
     {
         const float  dc_dG_op    = dc_dG_opacity_totals    [g_idx];
         const vec3   dG_dSigma_op    = dG_dSigma_opacity_totals[g_idx];
@@ -532,14 +537,19 @@ __global__ void assemble_newton_derivatives_kernel(
         dc_dopacity[g_idx]    = grad_op;
         d2c_dopacity2[g_idx]  = hess_op;
     }
+    */
 
     // ========================================================================
-    // Color solve (R, G, B)
+    // Color solve (R, G, B) - NOT CALLED HERE
+    // DC_DCOLOR IS CALCULATED IN BACKWARD OF SPHERICAL HARMONICS
+    // D2C_DCOLOR2 IS ALWAYS 0
     // ========================================================================
+    /*
     for (int chan = 0; chan < 3; ++chan) {
         dc_dcolor   [idx3] = grad_c;
         d2c_dcolor2 [idx3] = hess_c;
     }
+    */
 }
 
 
@@ -580,9 +590,9 @@ void launch_assemble_newton_derivatives_kernel(
     at::Tensor& dc_dlambda,
     at::Tensor& d2c_dlambda2,
     at::Tensor& dc_dtheta,
-    at::Tensor& d2c_dtheta2,
-    at::Tensor& dc_dcolor,
-    at::Tensor& dc_dsigma
+    at::Tensor& d2c_dtheta2
+//    at::Tensor& dc_dcolor,
+//    at::Tensor& dc_dsigma
 ) {
     // Configure kernel launch
     const int threads = 256;
@@ -627,9 +637,9 @@ void launch_assemble_newton_derivatives_kernel(
         reinterpret_cast<vec2*>(dc_dlambda.data_ptr<float>()),
         reinterpret_cast<mat3*>(d2c_dlambda2.data_ptr<float>()),
         dc_dtheta.data_ptr<float>(),
-        d2c_dtheta2.data_ptr<float>(),
-        dc_dcolor.data_ptr<float>(),
-        dc_dsigma.data_ptr<float>()
+        d2c_dtheta2.data_ptr<float>()
+//       dc_dcolor.data_ptr<float>(),
+//        dc_dsigma.data_ptr<float>()
     );
 
     // Check for kernel launch errors

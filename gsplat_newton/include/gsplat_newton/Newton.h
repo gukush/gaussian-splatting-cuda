@@ -33,7 +33,7 @@ namespace gsplat_newton {
  * @param image_height The height of the rendered image.
  */
 void local_newton_backward_and_update(
-    const gsplat_newton::LocalNewtonContext& context,
+    const LocalNewtonContext& context,
     at::Tensor& means,
     at::Tensor& scales,
     at::Tensor& quats,

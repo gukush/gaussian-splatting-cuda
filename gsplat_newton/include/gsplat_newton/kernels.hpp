@@ -5,11 +5,16 @@
 #include <tuple>
 #include <ATen/cuda/CUDAContext.h>
 #include <c10/cuda/CUDAStream.h>
+#include "Common.h"
 
 // Forward declarations for core data structures if needed
 namespace gs {
     struct RenderOutput;
     class SplatData;
+}
+
+namespace at {
+class Tensor;
 }
 
 namespace gsplat_newton {
@@ -79,8 +84,8 @@ projection_ewa_3dgs_fused_fwd_LN(
     const float far_plane,
     const float radius_clip,
     const bool calc_compensations,
-    const CameraModelType camera_model
-)
+    const gsplat::CameraModelType camera_model
+);
 
 
 // ========================================================================
@@ -229,4 +234,95 @@ void update_opacity(LocalNewtonContext& context, SplatData& model);
  */
 void update_color(LocalNewtonContext& context, SplatData& model);
 
+
+// launchers:
+
+void launch_assemble_newton_derivatives_kernel(
+    const int num_gaussians,
+    const at::Tensor& dc_dcSH_totals,
+    const at::Tensor& dc_dG_totals,
+    const at::Tensor& dG_dmean2d_totals,
+    const at::Tensor& dG_dSigma_totals,
+    const at::Tensor& H_G_mean2d_totals,
+    const at::Tensor& H_G_sigma_totals,
+    const at::Tensor& H_G_mixed_totals,
+    const at::Tensor& dc_dG_opacity_totals,
+    const at::Tensor& dG_dSigma_opacity_totals,
+    const at::Tensor& H_G_sigma_opacity_totals,
+    at::Tensor& dc_dopacity,
+    at::Tensor& d2c_dopacity2,
+    const at::Tensor& jacobians,
+    const at::Tensor& dSigma_dpx,
+    const at::Tensor& dSigma_dpy,
+    const at::Tensor& dSigma_dpz,
+    const at::Tensor& dc_sh_dp,
+    const at::Tensor& H_pi_px,
+    const at::Tensor& H_pi_py,
+    const at::Tensor& H_c_sh_p,
+    const at::Tensor& H_Sigma_pxx,
+    const at::Tensor& H_Sigma_pxy,
+    const at::Tensor& H_Sigma_pyy,
+    const at::Tensor& dSigma_dtheta_inputs,
+    const at::Tensor& d2Sigma_dtheta2_inputs,
+    const at::Tensor& T_matrices,
+    const at::Tensor& conics_2d,
+    const at::Tensor& p_k,
+    const at::Tensor& camera_pos,
+    at::Tensor& d_c_vk,
+    at::Tensor& H_c_vk,
+    at::Tensor& dc_dlambda,
+    at::Tensor& d2c_dlambda2,
+    at::Tensor& dc_dtheta,
+    at::Tensor& d2c_dtheta2,
+    at::Tensor& dc_dcolor,
+    at::Tensor& dc_dsigma
+);
+
+
+void launch_projection_ewa_3dgs_fused_fwd_kernel_LN(
+    // inputs
+    const at::Tensor means,                // [N, 3]
+    const at::optional<at::Tensor> covars, // [N, 6] optional
+    const at::optional<at::Tensor> quats,  // [N, 4] optional
+    const at::optional<at::Tensor> scales, // [N, 3] optional
+    const at::optional<at::Tensor> opacities, // [N] optional
+    const at::Tensor viewmats,             // [C, 4, 4]
+    const at::Tensor Ks,                   // [C, 3, 3]
+    const uint32_t image_width,
+    const uint32_t image_height,
+    const float eps2d,
+    const float near_plane,
+    const float far_plane,
+    const float radius_clip,
+    const gsplat::CameraModelType camera_model,
+    // outputs
+    at::Tensor radii,                      // [C, N, 2]
+    at::Tensor means2d,                    // [C, N, 2]
+    at::Tensor depths,                     // [C, N]
+    at::Tensor conics,                     // [C, N, 3]
+    at::optional<at::Tensor> compensations, // [C, N] optional
+    // outputs for Local Newton
+    at::Tensor jacobians,                  // [C, N, 3, 2]
+    at::Tensor H_mean_y,                   // [C, N, 3, 3]
+    at::Tensor H_mean_x,                   // [C, N, 3, 3]
+    at::Tensor dSigma_dx,                  // [C, N, 2, 2]
+    at::Tensor dSigma_dy,                  // [C, N, 2, 2]
+    at::Tensor dSigma_dz,                  // [C, N, 2, 2]
+    at::Tensor H_Sigma,                    // [C, N, 3] (stores [H_S_xz, H_S_yz, H_S_zz])
+    at::Tensor dr_dp,                      // [C, N, 3, 3]
+    at::Tensor d2r_dp2_compact             // [C, N, 18]
+);
+
+void launch_solve_and_update_all_attributes_kernel(
+    const at::Tensor& dL_d_pos, const at::Tensor& H_L_pos,
+    const at::Tensor& dL_d_scale, const at::Tensor& H_L_scale,
+    const at::Tensor& dL_d_rot, const at::Tensor& H_L_rot,
+    const at::Tensor& dL_d_opacity, const at::Tensor& H_L_opacity,
+    const at::Tensor& dL_d_color, const at::Tensor& H_L_color,
+    const at::Tensor& U_k_bases, const at::Tensor& T_k_matrices,
+    at::Tensor& means, at::Tensor& scales, at::Tensor& quats,
+    at::Tensor& opacities, at::Tensor& sh_coeffs
+);
 } // namespace gsplat_newton
+
+

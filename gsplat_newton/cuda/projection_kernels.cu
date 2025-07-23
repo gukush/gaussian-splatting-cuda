@@ -9,7 +9,9 @@
 #include "Projection.h"
 #include "Utils.cuh"
 
-namespace gsplat {
+using namespace gsplat;
+
+namespace gsplat_newton {
 
 namespace cg = cooperative_groups;
 
@@ -36,14 +38,14 @@ __global__ void projection_ewa_3dgs_fused_fwd_kernel_LN(
     scalar_t *__restrict__ means2d,      // [C, N, 2]
     scalar_t *__restrict__ depths,       // [C, N]
     scalar_t *__restrict__ conics,       // [C, N, 3]
-    scalar_t *__restrict__ compensations // [C, N] optional
+    scalar_t *__restrict__ compensations, // [C, N] optional
     //outputs for Local Newton
     mat3x2 *__restrict__ jacobians, // [C, N, 3, 2] dmean2d/dmean3d
     mat3 *__restrict__ H_mean_y, // elements of Hessian d2mux/dmean3d^2 [C, N, 3, 3]
-    mat3 *__restirct__ H_mean_x, // elements of hessian d2muy/dmean3d^2 [C, N, 3, 3]
+    mat3 *__restrict__ H_mean_x, // elements of hessian d2muy/dmean3d^2 [C, N, 3, 3]
     mat2 *__restrict__ dSigma_dx,        // [C, N, 2, 2] ∂Σ/∂x
     mat2 *__restrict__ dSigma_dy,        // [C, N, 2, 2] ∂Σ/∂y
-    mat2 *__restrict__ dSigma_dz         // [C, N, 2, 2] ∂Σ/∂z
+    mat2 *__restrict__ dSigma_dz,         // [C, N, 2, 2] ∂Σ/∂z
     mat2 *__restrict__ H_Sigma, // stores it like that [H_S_xz, H_S_yz, H_S_zz] ∂2Σ/∂p2 [C, N, 3]
     mat3 *__restrict__ dr_dp,
     float *__restrict__ d2r_dp2_compact // hessian of [C, N, 18]
@@ -615,4 +617,5 @@ __device__ void compute_covariance_derivatives(
             }
         }
     }
+}
 }

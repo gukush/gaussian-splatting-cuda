@@ -1,10 +1,12 @@
 #include "gsplat_newton/local_newton_context.hpp"
 #include "gsplat_newton/kernels.hpp"
-#include "gsplat/cuda_utils.cuh" // For AT_DISPATCH_FLOATING_TYPES, etc.
-#include "projection.h"   // For CameraModelType
+#include "Utils.cuh" // For AT_DISPATCH_FLOATING_TYPES, etc.
+#include "Projection.h"   // For CameraModelType
+#include "Common.h"
 //#include "kernels/ssim.h"               // For SSIM functions
 #include <ATen/cuda/CUDAContext.h>
 #include <c10/cuda/CUDAStream.h>
+#include <c10/cuda/CUDAGuard.h> // for DEVICE_GUARD
 
 namespace gsplat_newton {
 
@@ -41,7 +43,7 @@ projection_ewa_3dgs_fused_fwd_LN(
     const float far_plane,
     const float radius_clip,
     const bool calc_compensations,
-    const CameraModelType camera_model
+    const gsplat::CameraModelType camera_model
 ) {
     DEVICE_GUARD(means);
     CHECK_INPUT(means);
@@ -620,3 +622,4 @@ void accumulate_y_2nd_order(
         }
     });
 }
+} // namespace gsplat_newton

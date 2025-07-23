@@ -15,11 +15,11 @@ void local_newton_backward(
     uint32_t image_height
 ) {
 
-    at::Tensor& means = gaussian_model.get_means();
-    at::Tensor& scales = gaussian_model.get_scaling();
-    at::Tensor& quats = gaussian_model.get_rotation();
-    at::Tensor& opacities = gaussian_model.get_opacity();
-    at::Tensor& sh_coeffs = gaussian_model.get_shs();
+    auto means = gaussian_model.get_means();
+    auto scales = gaussian_model.get_scaling();
+    auto quats = gaussian_model.get_rotation();
+    auto opacities = gaussian_model.get_opacity();
+    auto sh_coeffs = gaussian_model.get_shs();
     const at::Tensor& render_alphas = context.render_alphas;
     const at::Tensor& last_ids = context.last_ids;
     const at::Tensor& tile_offsets = context.tile_offsets;
@@ -141,7 +141,7 @@ void local_newton_backward(
 } // namespace gsplat
 
 solve_and_update(
-    const gsplat_newton::LocalNewtonContext& context,
+    const LocalNewtonContext& context,
     SplatData& gaussian_model,
     uint32_t image_width,
     uint32_t image_height

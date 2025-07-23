@@ -37,22 +37,30 @@ Camera::Camera(const torch::Tensor& R,
 
 Camera::Camera(const Camera& other, int new_width, int new_height)
     : _uid(other._uid),
-      _focal_x(other._focal_x),
-      _focal_y(other._focal_y),
-      _center_x(other._center_x),
-      _center_y(other._center_y),
-      _radial_distortion(other._radial_distortion),
-      _tangential_distortion(other._tangential_distortion),
-      _camera_model_type(other._camera_model_type),
       _image_name(other._image_name),
       _image_path(other._image_path),
-      _camera_width(other._camera_width),     // Preserve original dimensions
-      _camera_height(other._camera_height),   // Preserve original dimensions
-      _image_width(new_width),                // Set new output width
-      _image_height(new_height),              // Set new output height
-      _world_view_transform(other._world_view_transform.clone()) // Deep copy the transform
+      _image_width(new_width),
+      _image_height(new_height),
+      _world_view_transform(other._world_view_transform.clone()) // Deep copy transform
 {
-    // No body needed, everything is handled in the initializer list
+    // Scale the field of view angles proportionally to maintain the same projection
+    float width_scale = static_cast<float>(new_width) / static_cast<float>(other._image_width);
+    float height_scale = static_cast<float>(new_height) / static_cast<float>(other._image_height);
+
+    // Convert FoV to focal lengths, scale them, then convert back
+    float original_fx = static_cast<float>(other._image_width) / (2.0f * std::tan(other._FoVx / 2.0f));
+    float original_fy = static_cast<float>(other._image_height) / (2.0f * std::tan(other._FoVy / 2.0f));
+
+    float new_fx = original_fx * width_scale;
+    float new_fy = original_fy * height_scale;
+
+    _FoVx = 2.0f * std::atan(static_cast<float>(new_width) / (2.0f * new_fx));
+    _FoVy = 2.0f * std::atan(static_cast<float>(new_height) / (2.0f * new_fy));
+
+    // Validation
+    if (new_width <= 0 || new_height <= 0) {
+        throw std::invalid_argument("Camera dimensions must be positive");
+    }
 }
 
 torch::Tensor Camera::K() const {
