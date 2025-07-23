@@ -73,6 +73,7 @@ RenderOutput rasterize_newton_step(
 
     // Prepare camera parameters
     auto viewmat = viewpoint_camera.world_view_transform().to(torch::kCUDA);
+    context->viewmat = viewmat;
     TORCH_CHECK(viewmat.dim() == 3 && viewmat.size(0) == 1 && viewmat.size(1) == 4 && viewmat.size(2) == 4,
                 "viewmat must be [1, 4, 4], got ", viewmat.sizes());
     TORCH_CHECK(viewmat.is_cuda(), "viewmat must be on CUDA");

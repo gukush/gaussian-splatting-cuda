@@ -6,10 +6,10 @@
 #include <c10/cuda/CUDAGuard.h>
 #include "core/splat_data.hpp"
 
-namespace gsplat {
+namespace gsplat_newton {
 
 void local_newton_backward(
-    const LocalNewtonContext& context,
+    LocalNewtonContext& context,
     SplatData& gaussian_model,
     uint32_t image_width,
     uint32_t image_height
@@ -20,6 +20,7 @@ void local_newton_backward(
     auto quats = gaussian_model.get_rotation();
     auto opacities = gaussian_model.get_opacity();
     auto sh_coeffs = gaussian_model.get_shs();
+    const at::Tensor& viewmat = context.viewmat;
     const at::Tensor& render_alphas = context.render_alphas;
     const at::Tensor& last_ids = context.last_ids;
     const at::Tensor& tile_offsets = context.tile_offsets;
@@ -41,7 +42,7 @@ void local_newton_backward(
 
     // --- Stage 1: Backward Pass through Rasterizer ---
     // Computes per-Gaussian aggregated derivatives from image-space loss derivatives.
-    auto intermediate_derivs = gsplat_newton::compute_intermediate_derivatives_bwd(
+    auto intermediate_derivs = compute_intermediate_derivatives_bwd(
         context.means2d,
         context.conics,
         sh_coeffs.slice(1, 0, 1).squeeze(1), // Use DC term as representative color
@@ -56,7 +57,7 @@ void local_newton_backward(
         render_alphas,
         last_ids,
         dL_d_color_img,
-        at::nullopt, // v_render_alphas (assuming not needed or combined in dL_d_color_img)
+        at::Tensor(), //TODO: add optional support with at::nullopt. v_render_alphas (assuming not needed or combined in dL_d_color_img)
         means.size(0)
     );
 
@@ -71,7 +72,7 @@ void local_newton_backward(
 
     // --- Stage 2: "Backward pass" for Spherical Harmonics
     //
-    auto sh_outputs = launch_spherical_harmonics_LN_kernel(
+    auto sh_outputs = spherical_harmonics_LN(
         context.sh_degree,
         context.view_dirs,
         context.coeffs,
@@ -80,9 +81,10 @@ void local_newton_backward(
     auto& dcRAST_dck = std::get<0>(sh_outputs);
     auto& dcRAST_dr = std::get<1>(sh_outputs);
     auto& H_cRAST_r = std::get<2>(sh_outputs);
-    auto chained_outputs = launch_chain_rule_color_position_kernel(
+
+    auto chained_outputs = chain_rule_color_position(
         means,
-        viewmats.slice(0,0,1).inverse().slice(1,3,4).squeeze(), //camera_pos ??????
+        viewmat.slice(0,0,1).inverse().slice(1,3,4).squeeze(), //camera_pos ??????
         dcRAST_dr,
         H_cRAST_r
     );
@@ -119,7 +121,7 @@ void local_newton_backward(
         context.T_matrices,
         context.conics,
         means, // p_k
-        viewmats.slice(0,0,1).inverse().slice(1,3,4).squeeze() // camera_pos
+        viewmat.slice(0,0,1).inverse().slice(1,3,4).squeeze() // camera_pos
     );
 
     context.dL_d_pos      = std::get<0>(newton_systems);
@@ -138,20 +140,18 @@ void local_newton_backward(
 
 }
 
-} // namespace gsplat
-
-solve_and_update(
+void solve_and_update(
     const LocalNewtonContext& context,
     SplatData& gaussian_model,
     uint32_t image_width,
     uint32_t image_height
 ) {
 
-    auto& means = gaussian_model.get_means();
-    auto& scales = gaussian_model.get_scaling();
-    auto& quats = gaussian_model.get_rotation();
-    auto& opacities = gaussian_model.get_opacity();
-    auto& sh_coeffs = gaussian_model.get_shs();
+    auto means = gaussian_model.get_means();
+    auto scales = gaussian_model.get_scaling();
+    auto quats = gaussian_model.get_rotation();
+    auto opacities = gaussian_model.get_opacity();
+    auto sh_coeffs = gaussian_model.get_shs();
     DEVICE_GUARD(means);
     // Input checks
     CHECK_INPUT(means);
@@ -180,3 +180,6 @@ solve_and_update(
         means, scales, quats, opacities, sh_coeffs // Pass by reference to update in-place
     );
 }
+
+} // namespace gsplat_newton
+

@@ -316,3 +316,143 @@ __global__ void compute_intermediate_derivatives_kernel(
     }
 }
 
+template <uint32_t CDIM>
+void launch_compute_intermediate_derivatives_kernel(
+    const bool packed,
+    // --- Forward Pass Inputs ---
+    const at::Tensor &means2d,
+    const at::Tensor &conics,
+    const at::Tensor &colors,
+    const at::Tensor &opacities,
+    const at::optional<at::Tensor> &backgrounds,
+    const at::optional<at::Tensor> &masks,
+    const uint32_t image_width,
+    const uint32_t image_height,
+    const uint32_t tile_size,
+    const at::Tensor &tile_offsets,
+    const at::Tensor &flatten_ids,
+    // --- Forward Pass Outputs ---
+    const at::Tensor &render_alphas,
+    const at::Tensor &last_ids,
+    // --- Backward Pass Inputs (Output Gradients) ---
+    const at::Tensor &v_render_colors,
+    const at::Tensor &v_render_alphas,
+    // --- INTERMEDIATE OUTPUTS (per-Gaussian) ---
+    at::Tensor &dc_dcSH,
+    at::Tensor &dc_dG,
+    at::Tensor &dG_dmean2d,
+    at::Tensor &dG_dSigma,
+    at::Tensor &H_G_mean2d,
+    at::Tensor &H_G_sigma,
+    at::Tensor &H_G_mixed,
+    at::Tensor &dc_opac
+) {
+    uint32_t C = tile_offsets.size(0);
+    uint32_t N = means2d.size(0);
+    uint32_t tile_height = tile_offsets.size(1);
+    uint32_t tile_width = tile_offsets.size(2);
+    uint32_t n_isects = flatten_ids.size(0);
+
+    if (n_isects == 0) {
+        return; // No intersections, no work to do.
+    }
+
+    dim3 threads = {tile_size, tile_size, 1};
+    dim3 grid = {C, tile_height, tile_width};
+
+    const int64_t shmem_size =
+        tile_size * tile_size *
+        (sizeof(int32_t) + sizeof(vec3) + sizeof(vec3) + sizeof(float) * CDIM);
+
+    if (cudaFuncSetAttribute(
+            compute_intermediate_derivatives_kernel<CDIM, float>,
+            cudaFuncAttributeMaxDynamicSharedMemorySize, shmem_size
+        ) != cudaSuccess) {
+        AT_ERROR(
+            "Failed to set maximum shared memory size (requested ",
+            shmem_size,
+            " bytes), try lowering tile_size."
+        );
+    }
+
+    compute_intermediate_derivatives_kernel<CDIM, float>
+        <<<grid, threads, shmem_size, at::cuda::getCurrentCUDAStream()>>>(
+            C, N, n_isects, packed,
+            // --- Forward Pass Inputs ---
+            reinterpret_cast<const vec2 *>(means2d.data_ptr<float>()),
+            reinterpret_cast<const vec3 *>(conics.data_ptr<float>()),
+            colors.data_ptr<float>(),
+            opacities.data_ptr<float>(),
+            backgrounds.has_value() ? backgrounds.value().data_ptr<float>() : nullptr,
+            masks.has_value() ? masks.value().data_ptr<bool>() : nullptr,
+            image_width, image_height,
+            tile_size, tile_width, tile_height,
+            tile_offsets.data_ptr<int32_t>(),
+            flatten_ids.data_ptr<int32_t>(),
+            // --- Forward Pass Outputs ---
+            render_alphas.data_ptr<float>(),
+            last_ids.data_ptr<int32_t>(),
+            // --- Backward Pass Inputs (Output Gradients) ---
+            v_render_colors.data_ptr<float>(),
+            v_render_alphas.data_ptr<float>(),
+            // --- INTERMEDIATE OUTPUTS (per-Gaussian) ---
+            dc_dcSH.data_ptr<float>(),
+            dc_dG.data_ptr<float>(),
+            reinterpret_cast<vec2 *>(dG_dmean2d.data_ptr<float>()),
+            reinterpret_cast<vec3 *>(dG_dSigma.data_ptr<float>()),
+            reinterpret_cast<vec3 *>(H_G_mean2d.data_ptr<float>()),
+            H_G_sigma.data_ptr<float>(),
+            H_G_mixed.data_ptr<float>(),
+            dc_opac.data_ptr<float>()
+        );
+}
+
+// Explicit Instantiation for various color dimensions (CDIM)
+#define __INS__(CDIM)                                                                      \
+    template void launch_compute_intermediate_derivatives_kernel<CDIM>(                      \
+        const bool packed,                                                                 \
+        const at::Tensor &means2d,                                                         \
+        const at::Tensor &conics,                                                          \
+        const at::Tensor &colors,                                                          \
+        const at::Tensor &opacities,                                                       \
+        const at::optional<at::Tensor> &backgrounds,                                       \
+        const at::optional<at::Tensor> &masks,                                             \
+        const uint32_t image_width,                                                        \
+        const uint32_t image_height,                                                       \
+        const uint32_t tile_size,                                                          \
+        const at::Tensor &tile_offsets,                                                    \
+        const at::Tensor &flatten_ids,                                                     \
+        const at::Tensor &render_alphas,                                                   \
+        const at::Tensor &last_ids,                                                        \
+        const at::Tensor &v_render_colors,                                                 \
+        const at::Tensor &v_render_alphas,                                                 \
+        at::Tensor &dc_dcSH,                                                               \
+        at::Tensor &dc_dG,                                                                 \
+        at::Tensor &dG_dmean2d,                                                            \
+        at::Tensor &dG_dSigma,                                                             \
+        at::Tensor &H_G_mean2d,                                                            \
+        at::Tensor &H_G_sigma,                                                             \
+        at::Tensor &H_G_mixed,                                                             \
+        at::Tensor &dc_opac);
+
+__INS__(1)
+__INS__(2)
+__INS__(3)
+__INS__(4)
+__INS__(5)
+__INS__(8)
+__INS__(9)
+__INS__(16)
+__INS__(17)
+__INS__(32)
+__INS__(33)
+__INS__(64)
+__INS__(65)
+__INS__(128)
+__INS__(129)
+__INS__(256)
+__INS__(257)
+__INS__(512)
+__INS__(513)
+
+#undef __INS__

@@ -12,6 +12,7 @@ struct LocalNewtonContext {
     torch::Tensor depths;        // [C, N]    - Z-depths in camera space
     torch::Tensor view_dirs;     // [C, N, 3] - View directions from camera to mean
     torch::Tensor radii;
+    torch::Tensor viewmat;
     // ==================================
     // PROJECTION DERIVATIVES (w.r.t. 3D position p_k)
     // ==================================

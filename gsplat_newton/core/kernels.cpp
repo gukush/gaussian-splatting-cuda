@@ -8,6 +8,8 @@
 #include <c10/cuda/CUDAStream.h>
 #include <c10/cuda/CUDAGuard.h> // for DEVICE_GUARD
 
+using namespace gsplat;
+
 namespace gsplat_newton {
 
 // ========================================================================
@@ -138,10 +140,11 @@ projection_ewa_3dgs_fused_fwd_LN(
 // ========================================================================
 
 
-std::tuple<at::Tensor, at::Tensor> spherical_harmonics_LN(
+std::tuple<at::Tensor, at::Tensor, at::Tensor> spherical_harmonics_LN(
     const uint32_t      degrees_to_use,
     const at::Tensor&   dirs,       // [..., 3]
     const at::Tensor&   coeffs,     // [..., K, 3]
+    const at::Tensor& v_colors
 ) {
     DEVICE_GUARD(dirs);
     CHECK_INPUT(dirs);
@@ -169,16 +172,25 @@ std::tuple<at::Tensor, at::Tensor> spherical_harmonics_LN(
     //std::vector<int64_t> H_sizes = dirs.sizes().vec();
     //H_sizes.back() = 6;
     //at::Tensor H_dir = at::empty(H_sizes, dirs.options());
+    //    d_color_d_dir,
+    //    H_color_d_dir,
+    const uint32_t K = coeffs.size(-2);
+    const uint32_t N = dirs.numel() / 3;
+    auto v_coeffs = at::empty({(int64_t)N, (int64_t)K, 3}, dirs.options());
+    auto v_dir    = at::empty({(int64_t)N,          3}, dirs.options());
+    auto H_dir    = at::empty({(int64_t)N,          6}, dirs.options());
 
     launch_spherical_harmonics_LN_kernel(
         degrees_to_use,
         dirs,
         coeffs,
-        d_color_d_dir,
-        H_color_d_dir,
+        v_colors,
+        v_coeffs,
+        v_dir,
+        H_dir
     );
 
-    return std::make_tuple(d_color_d_dir, H_dir);
+    return std::make_tuple(v_dir,H_dir,v_coeffs);
 }
 
 
@@ -199,11 +211,9 @@ std::pair<at::Tensor,at::Tensor> chain_rule_color_position(
     TORCH_CHECK(camera_center.numel()   == 3, "camera_center must have 3 elements");
     TORCH_CHECK(color_dir_grad.size(-1) == 3, "color_dir_grad must have shape [...,3]");
     TORCH_CHECK(color_dir_hess.size(-1) == 6, "color_dir_hess must have shape [...,6]");
-
-    // allocate outputs
-    at::Tensor color_pos_grad = at::empty_like(color_dir_grad);
-    at::Tensor color_pos_hess = at::empty_like(color_dir_hess);
-
+    const uint32_t N = p_k.numel() / 3;
+    auto color_pos_grad = at::empty({(int64_t)N, 3}, p_k.options());
+    auto color_pos_hess = at::empty({(int64_t)N, 6}, p_k.options());
     launch_chain_rule_color_position_kernel(
         p_k,
         camera_center,
@@ -212,11 +222,11 @@ std::pair<at::Tensor,at::Tensor> chain_rule_color_position(
         color_pos_grad,
         color_pos_hess
     );
-
     return {color_pos_grad, color_pos_hess};
 }
 
-void chain_rule_sh_position(gs::LocalNewtonContext &context,
+/*
+void chain_rule_sh_position(LocalNewtonContext &context,
                             const torch::Tensor &means3D,
                             const torch::Tensor &viewmat,
                             const torch::Tensor &d_color_d_dir,
@@ -252,38 +262,37 @@ void chain_rule_sh_position(gs::LocalNewtonContext &context,
         }));
     C10_CUDA_KERNEL_LAUNCH_CHECK();
 }
-
+*/
 
 // ========================================================================
 // 3. BACKWARD PASS FOR RASTERIZATION KERNEL (GRADIENTS COMPUTATION)
 // ========================================================================
 
-
 std::tuple<at::Tensor, at::Tensor, at::Tensor, at::Tensor, at::Tensor,
            at::Tensor, at::Tensor, at::Tensor>
 compute_intermediate_derivatives_bwd(
     // Gaussian parameters
-    const at::Tensor means2d,                   // [C, N, 2] or [nnz, 2]
-    const at::Tensor conics,                    // [C, N, 3] or [nnz, 3]
-    const at::Tensor colors,                    // [C, N, 3] or [nnz, 3]
-    const at::Tensor opacities,                 // [C, N] or [nnz]
-    const at::optional<at::Tensor> backgrounds, // [C, 3]
-    const at::optional<at::Tensor> masks,       // [C, tile_height, tile_width]
+    const at::Tensor means2d,
+    const at::Tensor conics,
+    const at::Tensor colors,
+    const at::Tensor opacities,
+    const at::optional<at::Tensor> backgrounds,
+    const at::optional<at::Tensor> masks,
     // image size
     const uint32_t image_width,
     const uint32_t image_height,
     const uint32_t tile_size,
     // intersections
-    const at::Tensor tile_offsets, // [C, tile_height, tile_width]
-    const at::Tensor flatten_ids,  // [n_isects]
+    const at::Tensor tile_offsets,
+    const at::Tensor flatten_ids,
     // forward outputs
-    const at::Tensor render_alphas, // [C, image_height, image_width, 1]
-    const at::Tensor last_ids,      // [C, image_height, image_width]
+    const at::Tensor render_alphas,
+    const at::Tensor last_ids,
     // gradients of outputs
-    const at::Tensor v_render_colors, // [C, image_height, image_width, 3]
-    const at::Tensor v_render_alphas, // [C, image_height, image_width, 1]
+    const at::Tensor v_render_colors,
+    const at::Tensor v_render_alphas,
     // output shapes
-    const int64_t N  // number of Gaussians
+    const int64_t N
 ) {
     DEVICE_GUARD(means2d);
     CHECK_INPUT(means2d);
@@ -316,33 +325,34 @@ compute_intermediate_derivatives_bwd(
     at::Tensor H_G_mixed = at::zeros({N, 6}, means2d.options());
     at::Tensor v_opac = at::zeros({N}, means2d.options());
 
-#define __LAUNCH_KERNEL__(N)                                                   \
-    case N:                                                                    \
-        launch_compute_intermediate_derivatives_bwd_kernel<N>(                 \
-            means2d,                                                           \
-            conics,                                                            \
-            colors,                                                            \
-            opacities,                                                         \
-            backgrounds,                                                       \
-            masks,                                                             \
-            image_width,                                                       \
-            image_height,                                                      \
-            tile_size,                                                         \
-            tile_offsets,                                                      \
-            flatten_ids,                                                       \
-            render_alphas,                                                     \
-            last_ids,                                                          \
-            v_render_colors,                                                   \
-            v_render_alphas,                                                   \
-            dc_dcSH,                                                           \
-            dc_dG,                                                             \
-            dG_dmean2d,                                                        \
-            dG_dSigma,                                                         \
-            H_G_mean2d,                                                        \
-            H_G_sigma,                                                         \
-            H_G_mixed,                                                         \
-            v_opac                                                             \
-        );                                                                     \
+#define __LAUNCH_KERNEL__(CHANNELS) \
+    case CHANNELS: \
+        launch_compute_intermediate_derivatives_kernel<CHANNELS>( \
+            packed, \
+            means2d, \
+            conics, \
+            colors, \
+            opacities, \
+            backgrounds, \
+            masks, \
+            image_width, \
+            image_height, \
+            tile_size, \
+            tile_offsets, \
+            flatten_ids, \
+            render_alphas, \
+            last_ids, \
+            v_render_colors, \
+            v_render_alphas, \
+            dc_dcSH, \
+            dc_dG, \
+            dG_dmean2d, \
+            dG_dSigma, \
+            H_G_mean2d, \
+            H_G_sigma, \
+            H_G_mixed, \
+            v_opac \
+        ); \
         break;
 
     switch (channels) {
@@ -459,8 +469,8 @@ assemble_newton_derivatives(
     auto d2c_dtheta2 = torch::zeros({num_gaussians}, options);
     auto dc_dopacity = torch::zeros({num_gaussians}, options);
     auto d2c_dopacity2 = torch::zeros({num_gaussians}, options);
-    auto dc_dcolor = torch::zeros({num_gaussians, 3}, options);
-    auto dc_dsigma = torch::zeros({num_gaussians}, options);
+    //auto dc_dcolor = torch::zeros({num_gaussians, 3}, options);
+    //auto dc_dsigma = torch::zeros({num_gaussians}, options);
 
     // Launch the kernel
     launch_assemble_newton_derivatives_kernel(
@@ -499,17 +509,14 @@ assemble_newton_derivatives(
         dc_dlambda,
         d2c_dlambda2,
         dc_dtheta,
-        d2c_dtheta2,
-        dc_dcolor,
-        dc_dsigma
+        d2c_dtheta2
     );
 
     return std::make_tuple(
         d_c_vk, H_c_vk,
         dc_dlambda, d2c_dlambda2,
         dc_dtheta, d2c_dtheta2,
-        dc_dopacity, d2c_dopacity2,
-        dc_dcolor, dc_dsigma
+        dc_dopacity, d2c_dopacity2
     );
 }
 
@@ -551,23 +558,27 @@ torch::Tensor compute_y_updates(
 }
 
 void accumulate_y_2nd_order(
-    const torch::Tensor& masks,
+    // MODIFIED: Changed masks to be optional for consistency
+    const at::optional<at::Tensor>& masks,
     const uint32_t image_width,
     const uint32_t image_height,
     const uint32_t tile_size,
-    const torch::Tensor& tile_offsets,
-    const torch::Tensor& flatten_ids,
-    const torch::Tensor& last_ids,
-    const torch::Tensor& dL_dc,
-    const torch::Tensor& d2L_dc2,
-    const torch::Tensor& dcdy,
-    const torch::Tensor& d2cdy2,
-    torch::Tensor& grad_y,
-    torch::Tensor& hess_y
+    const at::Tensor& tile_offsets,
+    const at::Tensor& flatten_ids,
+    const at::Tensor& last_ids,
+    const at::Tensor& dL_dc,
+    const at::Tensor& d2L_dc2,
+    const at::Tensor& dcdy,
+    const at::Tensor& d2cdy2,
+    at::Tensor& grad_y,
+    at::Tensor& hess_y
 ) {
     // Device and input checks
     DEVICE_GUARD(dL_dc);
-    CHECK_INPUT(masks);
+    // MODIFIED: Check masks only if it has a value
+    if (masks.has_value()) {
+        CHECK_INPUT(masks.value());
+    }
     CHECK_INPUT(tile_offsets);
     CHECK_INPUT(flatten_ids);
     CHECK_INPUT(last_ids);
@@ -583,43 +594,48 @@ void accumulate_y_2nd_order(
     const uint32_t tile_width = tile_offsets.size(2);
     const uint32_t n_isects = flatten_ids.size(0);
     const bool packed = false; // Not used in this kernel
-    const uint32_t CDIM = dcdy.size(1); // Channel dimension
+    const uint32_t CDIM = dcdy.size(1);
 
-    // Configure kernel launch
     dim3 threads = {tile_size, tile_size, 1};
     dim3 grid = {C, tile_height, tile_width};
 
-    // Shared memory size calculation
     const uint32_t BS = tile_size * tile_size;
     const size_t shmem_size =
-        BS * sizeof(int32_t) +        // id_batch
-        BS * CDIM * 2 * sizeof(float) +  // dcdy_batch
-        BS * CDIM * 3 * sizeof(float);   // d2cdy2_batch
+        BS * sizeof(int32_t) +      // id_batch
+        BS * CDIM * 2 * sizeof(float) + // dcdy_batch
+        BS * CDIM * 3 * sizeof(float);  // d2cdy2_batch
 
-    // Launch kernel based on CDIM
+#define LAUNCH_ACCUMULATE_KERNEL(CHANNELS) \
+    launch_accumulate_y_2nd_order_kernel<CHANNELS, scalar_t>( \
+        C, n_isects, packed, \
+        masks.has_value() ? masks.value().data_ptr<bool>() : nullptr, \
+        image_width, image_height, tile_size, tile_width, tile_height, \
+        tile_offsets.data_ptr<int32_t>(), \
+        flatten_ids.data_ptr<int32_t>(), \
+        last_ids.data_ptr<int32_t>(), \
+        dL_dc.data_ptr<scalar_t>(), \
+        d2L_dc2.data_ptr<scalar_t>(), \
+        dcdy.data_ptr<scalar_t>(), \
+        d2cdy2.data_ptr<scalar_t>(), \
+        grad_y.data_ptr<scalar_t>(), \
+        hess_y.data_ptr<scalar_t>(), \
+        shmem_size \
+    )
+
     AT_DISPATCH_FLOATING_TYPES(dL_dc.scalar_type(), "accumulate_y_2nd_order", [&] {
         switch (CDIM) {
-            case 1: launch_accumulate_y_2nd_order_kernel<1, scalar_t>(
-                C, n_isects, packed,
-                masks.data_ptr<bool>(),
-                image_width, image_height, tile_size, tile_width, tile_height,
-                tile_offsets.data_ptr<int32_t>(),
-                flatten_ids.data_ptr<int32_t>(),
-                last_ids.data_ptr<int32_t>(),
-                dL_dc.data_ptr<scalar_t>(),
-                d2L_dc2.data_ptr<scalar_t>(),
-                dcdy.data_ptr<scalar_t>(),
-                d2cdy2.data_ptr<scalar_t>(),
-                grad_y.data_ptr<scalar_t>(),
-                hess_y.data_ptr<scalar_t>(),
-                shmem_size
-            ); break;
-            case 3: launch_accumulate_y_2nd_order_kernel<3, scalar_t>(
-                // Same parameters as above
-            ); break;
+            case 1:
+                LAUNCH_ACCUMULATE_KERNEL(1);
+                break;
+            case 3:
+                // FIXED: This call was empty, now it's populated via the macro
+                LAUNCH_ACCUMULATE_KERNEL(3);
+                break;
             // Add more cases as needed
-            default: AT_ERROR("Unsupported channel dimension: ", CDIM);
+            default:
+                AT_ERROR("Unsupported channel dimension: ", CDIM);
         }
     });
+#undef LAUNCH_ACCUMULATE_KERNEL
 }
 } // namespace gsplat_newton

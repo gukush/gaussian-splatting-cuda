@@ -18,7 +18,7 @@ set(GSN_SOURCES
     cuda/projection_kernels.cu
     cuda/rasterization_kernels.cu
     cuda/sh_kernels.cu
-    cuda/sh_kernels_old.cu
+    # cuda/sh_kernels_old.cu
     cuda/update_kernels.cu
 )
 

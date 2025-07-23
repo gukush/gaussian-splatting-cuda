@@ -15,7 +15,7 @@
 #include "Utils.cuh"
 
 namespace cg = cooperative_groups;
-
+using namespace gsplat;
 //-----------------------------------------------------------------------------
 // (1) Accumulate per-gaussian ∂L/∂y_k  and  ∂²L/∂y_k²
 //-----------------------------------------------------------------------------

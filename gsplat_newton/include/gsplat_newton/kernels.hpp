@@ -17,6 +17,9 @@ namespace at {
 class Tensor;
 }
 
+
+using gsplat::vec2;
+
 namespace gsplat_newton {
 
 /**
@@ -119,6 +122,19 @@ torch::Tensor sh_fwd_with_derivatives(
  */
 void chain_rule_sh_position(LocalNewtonContext& context);
 
+std::tuple<at::Tensor, at::Tensor, at::Tensor> spherical_harmonics_LN(
+    const uint32_t      degrees_to_use,
+    const at::Tensor&   dirs,       // [..., 3]
+    const at::Tensor&   coeffs,     // [..., K, 3]
+    const at::Tensor& v_colors
+);
+
+std::pair<at::Tensor,at::Tensor> chain_rule_color_position(
+    const at::Tensor& p_k,             // [...,3]
+    const at::Tensor& camera_center,   // [3]
+    const at::Tensor& color_dir_grad,  // [...,3]
+    const at::Tensor& color_dir_hess   // [...,6]
+);
 
 // ========================================================================
 // 3. LOSS & RASTERIZATION BACKWARD KERNELS
@@ -186,6 +202,34 @@ void aggregate_intermediate_derivatives(
 );
 
 
+std::tuple<at::Tensor, at::Tensor, at::Tensor, at::Tensor, at::Tensor,
+           at::Tensor, at::Tensor, at::Tensor>
+compute_intermediate_derivatives_bwd(
+    // Gaussian parameters
+    const at::Tensor means2d,
+    const at::Tensor conics,
+    const at::Tensor colors,
+    const at::Tensor opacities,
+    const at::optional<at::Tensor> backgrounds,
+    const at::optional<at::Tensor> masks,
+    // image size
+    const uint32_t image_width,
+    const uint32_t image_height,
+    const uint32_t tile_size,
+    // intersections
+    const at::Tensor tile_offsets,
+    const at::Tensor flatten_ids,
+    // forward outputs
+    const at::Tensor render_alphas,
+    const at::Tensor last_ids,
+    // gradients of outputs
+    const at::Tensor v_render_colors,
+    const at::Tensor v_render_alphas,
+    // output shapes
+    const int64_t N
+);
+
+
 // ========================================================================
 // 4. ASSEMBLY & UPDATE KERNELS
 // ========================================================================
@@ -197,7 +241,40 @@ void aggregate_intermediate_derivatives(
  * @param context The context struct containing all necessary input derivatives.
  * The final g and H for each parameter group will be stored back into the context.
  */
-void assemble_newton_derivatives(LocalNewtonContext& context);
+
+std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor,
+           torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor>
+assemble_newton_derivatives(
+    // Input tensors from intermediate derivatives
+    const torch::Tensor& dc_dcSH_totals,
+    const torch::Tensor& dc_dG_totals,
+    const torch::Tensor& dG_dmean2d_totals,
+    const torch::Tensor& dG_dSigma_totals,
+    const torch::Tensor& H_G_mean2d_totals,
+    const torch::Tensor& H_G_sigma_totals,
+    const torch::Tensor& H_G_mixed_totals,
+    const torch::Tensor& dc_dG_opacity_totals,
+    const torch::Tensor& dG_dSigma_opacity_totals,
+    const torch::Tensor& H_G_sigma_opacity_totals,
+    // Projection derivatives
+    const torch::Tensor& jacobians,
+    const torch::Tensor& dSigma_dpx,
+    const torch::Tensor& dSigma_dpy,
+    const torch::Tensor& dSigma_dpz,
+    const torch::Tensor& dc_sh_dp,
+    const torch::Tensor& H_pi_px,
+    const torch::Tensor& H_pi_py,
+    const torch::Tensor& H_c_sh_p,
+    const torch::Tensor& H_Sigma_pxx,
+    const torch::Tensor& H_Sigma_pxy,
+    const torch::Tensor& H_Sigma_pyy,
+    const torch::Tensor& dSigma_dtheta_inputs,
+    const torch::Tensor& d2Sigma_dtheta2_inputs,
+    const torch::Tensor& T_matrices,
+    const torch::Tensor& conics_2d,
+    const torch::Tensor& p_k,
+    const torch::Tensor& camera_pos
+);
 
 /**
  * @brief Solves the local Newton system and updates the 3D positions of the Gaussians.
@@ -273,9 +350,7 @@ void launch_assemble_newton_derivatives_kernel(
     at::Tensor& dc_dlambda,
     at::Tensor& d2c_dlambda2,
     at::Tensor& dc_dtheta,
-    at::Tensor& d2c_dtheta2,
-    at::Tensor& dc_dcolor,
-    at::Tensor& dc_dsigma
+    at::Tensor& d2c_dtheta2
 );
 
 
@@ -323,6 +398,105 @@ void launch_solve_and_update_all_attributes_kernel(
     at::Tensor& means, at::Tensor& scales, at::Tensor& quats,
     at::Tensor& opacities, at::Tensor& sh_coeffs
 );
+
+
+void launch_spherical_harmonics_LN_kernel(
+    const uint32_t      degrees_to_use,
+    const at::Tensor&   dirs,       // [..., 3]
+    const at::Tensor&   coeffs,     // [..., K, 3]
+    const at::Tensor&   v_colors,   // dc_RAST / dc_SH
+    //outputs
+    at::Tensor&         v_coeffs,   // dc_RAST / dc_attribute
+    at::Tensor&         v_dir,      // [..., 3]     (dc_RAST / dr)
+    at::Tensor&         H_dir       // [..., 6]     (d2c_RAST / dr2)
+);
+
+void launch_chain_rule_color_position_kernel(
+    const at::Tensor& p_k,             // [...,3]
+    const at::Tensor& camera_center,   // [3]
+    const at::Tensor& color_dir_grad,  // [...,3]
+    const at::Tensor& color_dir_hess,  // [...,6]
+    at::Tensor&       color_pos_grad,  // [...,3]
+    at::Tensor&       color_pos_hess   // [...,6]
+);
+
+
+template <uint32_t CDIM, typename scalar_t>
+void launch_accumulate_y_2nd_order_kernel(
+    const uint32_t C,
+    const uint32_t n_isects,
+    const bool packed,
+    const bool* masks,
+    const uint32_t image_width,
+    const uint32_t image_height,
+    const uint32_t tile_size,
+    const uint32_t tile_width,
+    const uint32_t tile_height,
+    const int32_t* tile_offsets,
+    const int32_t* flatten_ids,
+    const int32_t* last_ids,
+    const scalar_t* dL_dc,
+    const scalar_t* d2L_dc2,
+    const scalar_t* dcdy,
+    const scalar_t* d2cdy2,
+    scalar_t* grad_y,
+    scalar_t* hess_y,
+    size_t shmem_size
+);
+
+/*
+template<typename scalar_t>
+__global__ void
+compute_y_updates_kernel(
+    const uint32_t n_isects,
+    // from the first pass:
+    const scalar_t* __restrict__ grad_y,   // [n_isects, 2]
+    const scalar_t* __restrict__ hess_y,   // [n_isects, 3]
+    // optional regularizer:
+    const bool      do_reg,                // whether to add 2·λ to Hessian & λ·y to grad
+    const scalar_t  lambda,                // your λ
+    const vec2*     __restrict__ yk,       // the current y_k values, [n_isects]
+    // outputs:
+    vec2*           __restrict__ delta_y   // [n_isects]
+);
+*/
+
+void launch_compute_y_updates_kernel(
+    const uint32_t n_isects,
+    const float* grad_y,
+    const float* hess_y,
+    const bool do_reg,
+    const float lambda,
+    const vec2* yk,
+    vec2* delta_y
+);
+
+template<uint32_t CDIM> void launch_compute_intermediate_derivatives_kernel(                      \
+        const bool packed,                                                                 \
+        const at::Tensor &means2d,                                                         \
+        const at::Tensor &conics,                                                          \
+        const at::Tensor &colors,                                                          \
+        const at::Tensor &opacities,                                                       \
+        const at::optional<at::Tensor> &backgrounds,                                       \
+        const at::optional<at::Tensor> &masks,                                             \
+        const uint32_t image_width,                                                        \
+        const uint32_t image_height,                                                       \
+        const uint32_t tile_size,                                                          \
+        const at::Tensor &tile_offsets,                                                    \
+        const at::Tensor &flatten_ids,                                                     \
+        const at::Tensor &render_alphas,                                                   \
+        const at::Tensor &last_ids,                                                        \
+        const at::Tensor &v_render_colors,                                                 \
+        const at::Tensor &v_render_alphas,                                                 \
+        at::Tensor &dc_dcSH,                                                               \
+        at::Tensor &dc_dG,                                                                 \
+        at::Tensor &dG_dmean2d,                                                            \
+        at::Tensor &dG_dSigma,                                                             \
+        at::Tensor &H_G_mean2d,                                                            \
+        at::Tensor &H_G_sigma,                                                             \
+        at::Tensor &H_G_mixed,                                                             \
+        at::Tensor &dc_opac);
+
 } // namespace gsplat_newton
 
 

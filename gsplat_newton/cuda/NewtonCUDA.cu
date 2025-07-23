@@ -1,10 +1,12 @@
-#include "Newton.h"
+#include "gsplat_newton/Newton.h"
 #include "Common.h"
 #include "Utils.cuh" // For matrix operations
 #include <ATen/Dispatch.h>
 #include <c10/cuda/CUDAStream.h>
 
-namespace gsplat {
+using namespace gsplat;
+
+namespace gsplat_newton {
 
 // This single kernel handles solving and updating for all attributes for one Gaussian.
 // Each thread processes one Gaussian.
@@ -69,7 +71,7 @@ __global__ void solve_updates_and_backproject_kernel_impl(
         vec3 axis = vec3(0, 0, 1);
         float angle = delta_theta;
         vec4 delta_q = vec4(cos(angle/2.f), sin(angle/2.f) * axis.x, sin(angle/2.f) * axis.y, sin(angle/2.f) * axis.z);
-        vec 4 q_new = delta_q * q_current;
+        vec4 q_new = delta_q * q_current;
         quats[gid * 4 + 0] = q_new.w;
         quats[gid * 4 + 1] = q_new.x;
         quats[gid * 4 + 2] = q_new.y;
@@ -84,7 +86,7 @@ __global__ void solve_updates_and_backproject_kernel_impl(
     H_opac += 1.f / (current_opac * current_opac) + 1.f / ((1.f - current_opac) * (1.f - current_opac));
     if (abs(H_opac) > 1e-6) {
         float delta_opac = -grad_opac / H_opac;
-        opacities[gid] = clamp(current_opac + delta_opac, 1e-6f, 1.0f - 1e-6f);
+        opacities[gid] = glm::clamp(current_opac + delta_opac, 1e-6f, 1.0f - 1e-6f);
     }
 
     // --- Color Update ---

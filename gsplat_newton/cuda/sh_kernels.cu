@@ -8,6 +8,8 @@
 #include "SphericalHarmonics.h"
 #include "Utils.cuh"
 
+using namespace gsplat;
+
 template <typename scalar_t>
 __device__ void chain_rule_color_position_kernel(
     const glm::vec3 &p_k,                 // Input position
@@ -123,16 +125,17 @@ __global__ void chain_rule_color_position_global_kernel(
     );
 }
 
-std::tuple<at::Tensor, at::Tensor> launch_chain_rule_color_position_kernel(
+void launch_chain_rule_color_position_kernel(
     const at::Tensor& p_k,             // [...,3]
     const at::Tensor& camera_center,   // [3]
     const at::Tensor& color_dir_grad,  // [...,3]
     const at::Tensor& color_dir_hess,  // [...,6]
-    //at::Tensor&       color_pos_grad,  // [...,3]
-    //at::Tensor&       color_pos_hess   // [...,6]
+    at::Tensor&       color_pos_grad,  // [...,3]
+    at::Tensor&       color_pos_hess   // [...,6]
 ) {
     const uint32_t N = p_k.numel() / 3;
-    if (N == 0) {
+    if (N == 0) return;
+    /*{
       // return two empty tensors of shape [0,3] and [0,6]
       auto empty_grad = at::empty({0,3}, p_k_.options());
       auto empty_hess = at::empty({0,6}, p_k_.options());
@@ -140,6 +143,7 @@ std::tuple<at::Tensor, at::Tensor> launch_chain_rule_color_position_kernel(
     }
     auto pos_grad = at::empty({(int64_t)N, 3}, p_k_.options());
     auto pos_hess = at::empty({(int64_t)N, 6}, p_k_.options());
+    */
     const int threads = 256;
     const int blocks  = (N + threads - 1) / threads;
 
@@ -162,7 +166,7 @@ std::tuple<at::Tensor, at::Tensor> launch_chain_rule_color_position_kernel(
         );
     });
 
-    return { pos_grad, pos_hess };
+    //return { pos_grad, pos_hess };
 }
 
 
@@ -399,18 +403,20 @@ __global__ void spherical_harmonics_LN_kernel(
     }
 }
 
-std::tuple<at::Tensor, at::Tensor, at::Tensor> launch_spherical_harmonics_LN_kernel(
+void launch_spherical_harmonics_LN_kernel(
     const uint32_t      degrees_to_use,
     const at::Tensor&   dirs,       // [..., 3]
     const at::Tensor&   coeffs,     // [..., K, 3]
     const at::Tensor&   v_colors,   // dc_RAST / dc_SH
     //outputs
-    //at::Tensor&         v_coeffs,   // dc_RAST / dc_attribute
-    //at::Tensor&         v_dir,      // [..., 3]     (dc_RAST / dr)
-    //at::Tensor&         H_dir       // [..., 6]     (d2c_RAST / dr2)
+    at::Tensor&         v_coeffs,   // dc_RAST / dc_attribute
+    at::Tensor&         v_dir,      // [..., 3]     (dc_RAST / dr)
+    at::Tensor&         H_dir       // [..., 6]     (d2c_RAST / dr2)
 ) {
     const uint32_t K = coeffs.size(-2);
     const uint32_t N = dirs.numel() / 3;
+    if (N == 0) return;
+    /*
     if (N == 0) {
       // return three empty tensors with the right shape
       return {
@@ -419,15 +425,16 @@ std::tuple<at::Tensor, at::Tensor, at::Tensor> launch_spherical_harmonics_LN_ker
         at::empty({0,   6}, dirs_.options())
       };
     }
+    */
 
     // create outputs
-    auto v_coeffs = at::empty({(int64_t)N, (int64_t)K, 3}, dirs_.options());
-    auto v_dir    = at::empty({(int64_t)N,          3}, dirs_.options());
-    auto H_dir    = at::empty({(int64_t)N,          6}, dirs_.options());
+    //auto v_coeffs = at::empty({(int64_t)N, (int64_t)K, 3}, dirs_.options());
+    //auto v_dir    = at::empty({(int64_t)N,          3}, dirs_.options());
+    //auto H_dir    = at::empty({(int64_t)N,          6}, dirs_.options());
 
     const int threads = 256;
     const int blocks  = (N + threads - 1) / threads;
-    at::Tensor d_color_d_dir = at::empty(grad_shape, dirs.options());
+    //at::Tensor d_color_d_dir = at::empty(grad_shape, dirs.options());
     AT_DISPATCH_FLOATING_TYPES(dirs.scalar_type(), "spherical_harmonics_LN_kernel", [&] {
         spherical_harmonics_LN_kernel<scalar_t><<<blocks, threads, 0, at::cuda::getCurrentCUDAStream()>>>(
             N,
@@ -441,7 +448,7 @@ std::tuple<at::Tensor, at::Tensor, at::Tensor> launch_spherical_harmonics_LN_ker
             H_dir.data_ptr<scalar_t>()
         );
     });
-    return { out_v_coeffs, out_v_dir, out_H_dir };
+    //return { out_v_coeffs, out_v_dir, out_H_dir };
 }
 
 
