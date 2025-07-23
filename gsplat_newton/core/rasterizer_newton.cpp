@@ -76,12 +76,12 @@ RenderOutput rasterize_newton_step(
     const int image_width = static_cast<int>(viewpoint_camera.image_width());
 
     // Prepare camera parameters
-    auto viewmat = viewpoint_camera.world_view_transform().to(torch::kCUDA);
+    auto viewmat = viewpoint_camera.world_view_transform().to(torch::kCUDA).contiguous();
     context->viewmat = viewmat;
     TORCH_CHECK(viewmat.dim() == 3 && viewmat.size(0) == 1 && viewmat.size(1) == 4 && viewmat.size(2) == 4,
                 "viewmat must be [1, 4, 4], got ", viewmat.sizes());
     TORCH_CHECK(viewmat.is_cuda(), "viewmat must be on CUDA");
-
+    TORCH_CHECK(viewmat.is_contiguous(), "viewmat must be contiguous");
     const auto K = viewpoint_camera.K().to(torch::kCUDA);
     TORCH_CHECK(K.dim() == 3 && K.size(0) == 1 && K.size(1) == 3 && K.size(2) == 3,
                 "K must be [1, 3, 3], got ", K.sizes());
@@ -153,7 +153,16 @@ RenderOutput rasterize_newton_step(
     const float far_plane = 10000.0f;
     const float radius_clip = 0.0f;
     const bool calc_compensations = antialiased;
-
+    std::cout << "About to call projection kernel..." << std::endl;
+std::cout << "viewmat.defined(): " << viewmat.defined() << std::endl;
+std::cout << "viewmat.is_cuda(): " << viewmat.is_cuda() << std::endl;
+std::cout << "viewmat.dtype(): " << viewmat.dtype().name() << std::endl;
+std::cout << "viewmat.sizes(): " << viewmat.sizes() << std::endl;
+std::cout << "viewmat.is_contiguous(): " << viewmat.is_contiguous() << std::endl; // Add this
+if (!viewmat.defined()) {
+    std::cerr << "ERROR: viewmat is not defined!" << std::endl;
+    // Handle error or abort
+}
     // Call the projection function with all outputs
     auto projection_outputs = gsplat_newton::projection_ewa_3dgs_fused_fwd_LN(
         means3D,
@@ -228,12 +237,12 @@ RenderOutput rasterize_newton_step(
     auto masks = (radii > 0).all(-1); // [C, N]
     auto coeffs_flat = sh_coeffs.reshape({-1, sh_coeffs.size(-2), 3});
     // The Python code broadcasts colors from [N, K, 3] to [C, N, K, 3] if needed
-    //auto shs = sh_coeffs.unsqueeze(0); // [1, N, K, 3]
-
+    auto shs = sh_coeffs.unsqueeze(0); // [1, N, K, 3]
+    context->view_dirs = dirs;
     auto colors_tuple = spherical_harmonics(
         sh_degree,
-        context->view_dirs, // Input from projection context
-        coeffs_flat,
+        dirs, // Input from projection context
+        shs,
         masks,
         context,            // Populates SH derivatives in context
         means3D,

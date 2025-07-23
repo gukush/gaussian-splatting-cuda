@@ -46,7 +46,7 @@ void local_newton_backward(
     auto intermediate_derivs = compute_intermediate_derivatives_bwd(
         context.means2d,
         context.conics,
-        sh_coeffs.slice(1, 0, 1).squeeze(1), // Use DC term as representative color
+        context.colors, // Use DC term as representative color
         opacities,
         at::nullopt, // backgrounds
         at::nullopt, // masks

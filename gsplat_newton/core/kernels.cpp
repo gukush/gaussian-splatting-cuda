@@ -650,6 +650,8 @@ fusedssim_LN(
     at::Tensor img2,
     bool train
 ) {
+    img1 = img1.contiguous();
+    img2 = img2.contiguous();
     DEVICE_GUARD(img1);
     CHECK_INPUT(img1);
     CHECK_INPUT(img2);
@@ -702,6 +704,8 @@ fusedssim_backward_LN(
     at::Tensor s12_map
 ) {
     DEVICE_GUARD(img1);
+    img1 = img1.contiguous();
+    img2 = img2.contiguous();
     CHECK_INPUT(img1);   CHECK_INPUT(img2);
     CHECK_INPUT(dL_dmap);
     CHECK_INPUT(mu1_map); CHECK_INPUT(mu2_map);

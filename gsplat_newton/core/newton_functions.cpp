@@ -353,7 +353,7 @@ compute_local_newton_backward(
 
         // Get batch dimensions
         auto batch_dims = dirs.sizes().slice(0, dirs.dim() - 1);
-
+        // this check also runs previously
         TORCH_CHECK(dirs.sizes().slice(0, dirs.dim() - 1) == coeffs.sizes().slice(0, coeffs.dim() - 2),
                     "dirs and coeffs batch dimensions must match");
 
@@ -418,6 +418,7 @@ compute_local_newton_backward(
         ctx->masks = masks;
         ctx->sh_degree = sh_degree;
         ctx->num_bases = coeffs.size(-2);
+        ctx->colors = colors;
         //ctx->saved_data["sh_degree"] = sh_degree;
         //ctx->saved_data["num_bases"] = coeffs.size(-2); // Save the full K dimension
 

@@ -38,7 +38,7 @@ namespace gs {
         for (const auto& cam : cameras) {
             // 2. Project camera poses to the surface of the bounding sphere
             const auto& c2w_matrix = cam->world_view_transform();
-            torch::Tensor cam_pos = c2w_matrix.index({0, torch::indexing::Slice(0, 3), 3});
+            torch::Tensor cam_pos = c2w_matrix.index({0, torch::indexing::Slice(0, 3), 3}).to(scene_center.device());;
             torch::Tensor centered_pos = cam_pos - scene_center;
             // Project by normalizing the vector from the scene center to the camera
             projected_positions.push_back(centered_pos / centered_pos.norm());
@@ -157,6 +157,7 @@ namespace gs {
         }
 
         // --- Example of how to get nearest neighbors ---
+        /*
         if (iter % 1000 == 0) { // Example: print every 1000 iterations
             if (camera_knn_) {
                 auto neighbors = camera_knn_->find_neighbors(cam->uid(), 3);
@@ -167,6 +168,7 @@ namespace gs {
                 std::cout << std::endl;
             }
         }
+            */
         // --- End of example ---
         auto render_fn = [this, &cam, render_mode, gt_image, &ctx]() {
                 return gs::rasterize_newton_step(
@@ -203,7 +205,8 @@ namespace gs {
                                                          params_.optimization);
 
         current_loss_ = loss.item<float>();
-
+        ctx.dL_d_color_img = dL_c;
+        ctx.H_L_color_img = H_L_c;
         // Use local Newton instead of loss.backward()
         gsplat_newton::local_newton_backward(
             ctx,
@@ -232,8 +235,8 @@ namespace gs {
                     strategy_->get_model(),
                     background_,
                     tmp_image,
-                    false,
                     1.0f,
+                    false,
                     render_mode,
                     &tmp_ctx
                 );
