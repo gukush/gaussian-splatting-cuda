@@ -339,7 +339,7 @@ void launch_compute_intermediate_derivatives_kernel(
     const at::Tensor last_ids,
     // --- Backward Pass Inputs (Output Gradients) ---
     const at::Tensor v_render_colors,
-    const at::Tensor v_render_alphas,
+    const at::optional<at::Tensor> v_render_alphas,
     // --- INTERMEDIATE OUTPUTS (per-Gaussian) ---
     at::Tensor dc_dcSH,
     at::Tensor dc_dG,
@@ -397,7 +397,7 @@ void launch_compute_intermediate_derivatives_kernel(
             last_ids.data_ptr<int32_t>(),
             // --- Backward Pass Inputs (Output Gradients) ---
             v_render_colors.data_ptr<float>(),
-            v_render_alphas.data_ptr<float>(),
+            v_render_alphas.has_value() ? v_render_alphas.value().data_ptr<float>() : nullptr,
             // --- INTERMEDIATE OUTPUTS (per-Gaussian) ---
             dc_dcSH.data_ptr<float>(),
             dc_dG.data_ptr<float>(),
@@ -428,7 +428,7 @@ void launch_compute_intermediate_derivatives_kernel(
         const at::Tensor render_alphas,                                                 \
         const at::Tensor last_ids,                                                      \
         const at::Tensor v_render_colors,                                               \
-        const at::Tensor v_render_alphas,                                               \
+        const at::optional<at::Tensor> v_render_alphas,                                               \
         at::Tensor dc_dcSH,                                                             \
         at::Tensor dc_dG,                                                               \
         at::Tensor dG_dmean2d,                                                          \
