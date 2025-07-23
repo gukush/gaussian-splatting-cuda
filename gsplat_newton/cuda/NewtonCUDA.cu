@@ -120,15 +120,15 @@ __global__ void solve_updates_and_backproject_kernel_impl(
 }
 
 void launch_solve_and_update_all_attributes_kernel(
-    const at::Tensor& dL_d_pos, const at::Tensor& H_L_pos,
-    const at::Tensor& dL_d_scale, const at::Tensor& H_L_scale,
-    const at::Tensor& dL_d_rot, const at::Tensor& H_L_rot,
-    const at::Tensor& dL_d_opacity, const at::Tensor& H_L_opacity,
-    const at::Tensor& dL_d_color, const at::Tensor& H_L_color,
-    const at::Tensor& U_k_bases, const at::Tensor& T_k_matrices,
-    const at::Tensor& view_dirs,
-    at::Tensor& means, at::Tensor& scales, at::Tensor& quats,
-    at::Tensor& opacities, at::Tensor& sh_coeffs
+    const at::Tensor dL_d_pos, const at::Tensor H_L_pos,
+    const at::Tensor dL_d_scale, const at::Tensor H_L_scale,
+    const at::Tensor dL_d_rot, const at::Tensor H_L_rot,
+    const at::Tensor dL_d_opacity, const at::Tensor H_L_opacity,
+    const at::Tensor dL_d_color, const at::Tensor H_L_color,
+    const at::Tensor U_k_bases, const at::Tensor T_k_matrices,
+    const at::Tensor view_dirs,
+    at::Tensor means, at::Tensor scales, at::Tensor quats,
+    at::Tensor opacities, at::Tensor sh_coeffs
 ) {
     const uint32_t N = means.size(0);
     if (N == 0) return;

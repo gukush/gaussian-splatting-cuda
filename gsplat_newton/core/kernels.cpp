@@ -142,9 +142,9 @@ projection_ewa_3dgs_fused_fwd_LN(
 
 std::tuple<at::Tensor, at::Tensor, at::Tensor> spherical_harmonics_LN(
     const uint32_t      degrees_to_use,
-    const at::Tensor&   dirs,       // [..., 3]
-    const at::Tensor&   coeffs,     // [..., K, 3]
-    const at::Tensor& v_colors
+    const at::Tensor   dirs,       // [..., 3]
+    const at::Tensor   coeffs,     // [..., K, 3]
+    const at::Tensor v_colors
 ) {
     DEVICE_GUARD(dirs);
     CHECK_INPUT(dirs);
@@ -196,10 +196,10 @@ std::tuple<at::Tensor, at::Tensor, at::Tensor> spherical_harmonics_LN(
 
 
 std::pair<at::Tensor,at::Tensor> chain_rule_color_position(
-    const at::Tensor& p_k,             // [...,3]
-    const at::Tensor& camera_center,   // [3]
-    const at::Tensor& color_dir_grad,  // [...,3]
-    const at::Tensor& color_dir_hess   // [...,6]
+    const at::Tensor p_k,             // [...,3]
+    const at::Tensor camera_center,   // [3]
+    const at::Tensor color_dir_grad,  // [...,3]
+    const at::Tensor color_dir_hess   // [...,6]
 ) {
     DEVICE_GUARD(p_k);
     CHECK_INPUT(p_k);
@@ -395,34 +395,34 @@ std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor,
            torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor>
 assemble_newton_derivatives(
     // Input tensors from intermediate derivatives
-    const torch::Tensor& dc_dcSH_totals,
-    const torch::Tensor& dc_dG_totals,
-    const torch::Tensor& dG_dmean2d_totals,
-    const torch::Tensor& dG_dSigma_totals,
-    const torch::Tensor& H_G_mean2d_totals,
-    const torch::Tensor& H_G_sigma_totals,
-    const torch::Tensor& H_G_mixed_totals,
-    const torch::Tensor& dc_dG_opacity_totals,
-    const torch::Tensor& dG_dSigma_opacity_totals,
-    const torch::Tensor& H_G_sigma_opacity_totals,
+    const torch::Tensor dc_dcSH_totals,
+    const torch::Tensor dc_dG_totals,
+    const torch::Tensor dG_dmean2d_totals,
+    const torch::Tensor dG_dSigma_totals,
+    const torch::Tensor H_G_mean2d_totals,
+    const torch::Tensor H_G_sigma_totals,
+    const torch::Tensor H_G_mixed_totals,
+    const torch::Tensor dc_dG_opacity_totals,
+    const torch::Tensor dG_dSigma_opacity_totals,
+    const torch::Tensor H_G_sigma_opacity_totals,
     // Projection derivatives
-    const torch::Tensor& jacobians,
-    const torch::Tensor& dSigma_dpx,
-    const torch::Tensor& dSigma_dpy,
-    const torch::Tensor& dSigma_dpz,
-    const torch::Tensor& dc_sh_dp,
-    const torch::Tensor& H_pi_px,
-    const torch::Tensor& H_pi_py,
-    const torch::Tensor& H_c_sh_p,
-    const torch::Tensor& H_Sigma_pxx,
-    const torch::Tensor& H_Sigma_pxy,
-    const torch::Tensor& H_Sigma_pyy,
-    const torch::Tensor& dSigma_dtheta_inputs,
-    const torch::Tensor& d2Sigma_dtheta2_inputs,
-    const torch::Tensor& T_matrices,
-    const torch::Tensor& conics_2d,
-    const torch::Tensor& p_k,
-    const torch::Tensor& camera_pos
+    const torch::Tensor jacobians,
+    const torch::Tensor dSigma_dpx,
+    const torch::Tensor dSigma_dpy,
+    const torch::Tensor dSigma_dpz,
+    const torch::Tensor dc_sh_dp,
+    const torch::Tensor H_pi_px,
+    const torch::Tensor H_pi_py,
+    const torch::Tensor H_c_sh_p,
+    const torch::Tensor H_Sigma_pxx,
+    const torch::Tensor H_Sigma_pxy,
+    const torch::Tensor H_Sigma_pyy,
+    const torch::Tensor dSigma_dtheta_inputs,
+    const torch::Tensor d2Sigma_dtheta2_inputs,
+    const torch::Tensor T_matrices,
+    const torch::Tensor conics_2d,
+    const torch::Tensor p_k,
+    const torch::Tensor camera_pos
 ) {
     // Device and input checks
     DEVICE_GUARD(dc_dcSH_totals);
@@ -523,11 +523,11 @@ assemble_newton_derivatives(
 
 
 torch::Tensor compute_y_updates(
-    const torch::Tensor& grad_y,
-    const torch::Tensor& hess_y,
+    const torch::Tensor grad_y,
+    const torch::Tensor hess_y,
     const bool do_reg,
     const float lambda,
-    const torch::Tensor& yk
+    const torch::Tensor yk
 ) {
     // Device and input checks
     DEVICE_GUARD(grad_y);
@@ -563,15 +563,15 @@ void accumulate_y_2nd_order(
     const uint32_t image_width,
     const uint32_t image_height,
     const uint32_t tile_size,
-    const at::Tensor& tile_offsets,
-    const at::Tensor& flatten_ids,
-    const at::Tensor& last_ids,
-    const at::Tensor& dL_dc,
-    const at::Tensor& d2L_dc2,
-    const at::Tensor& dcdy,
-    const at::Tensor& d2cdy2,
-    at::Tensor& grad_y,
-    at::Tensor& hess_y
+    const at::Tensor tile_offsets,
+    const at::Tensor flatten_ids,
+    const at::Tensor last_ids,
+    const at::Tensor dL_dc,
+    const at::Tensor d2L_dc2,
+    const at::Tensor dcdy,
+    const at::Tensor d2cdy2,
+    at::Tensor grad_y,
+    at::Tensor hess_y
 ) {
     // Device and input checks
     DEVICE_GUARD(dL_dc);
@@ -649,8 +649,8 @@ std::tuple<at::Tensor, at::Tensor, at::Tensor,
 fusedssim_LN(
     float C1,
     float C2,
-    at::Tensor& img1,
-    at::Tensor& img2,
+    at::Tensor img1,
+    at::Tensor img2,
     bool train
 ) {
     DEVICE_GUARD(img1);
@@ -695,14 +695,14 @@ std::tuple<at::Tensor, at::Tensor>
 fusedssim_backward_LN(
     float C1,
     float C2,
-    at::Tensor& img1,
-    at::Tensor& img2,
-    at::Tensor& dL_dmap,
-    at::Tensor& mu1_map,
-    at::Tensor& mu2_map,
-    at::Tensor& s1_map,
-    at::Tensor& s2_map,
-    at::Tensor& s12_map
+    at::Tensor img1,
+    at::Tensor img2,
+    at::Tensor dL_dmap,
+    at::Tensor mu1_map,
+    at::Tensor mu2_map,
+    at::Tensor s1_map,
+    at::Tensor s2_map,
+    at::Tensor s12_map
 ) {
     DEVICE_GUARD(img1);
     CHECK_INPUT(img1);   CHECK_INPUT(img2);

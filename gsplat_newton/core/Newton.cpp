@@ -160,16 +160,16 @@ void solve_and_update(
     CHECK_INPUT(quats);
     CHECK_INPUT(opacities);
     CHECK_INPUT(sh_coeffs);
-    auto& dL_d_pos = context.dL_d_pos;
-    auto& H_L_pos = context.H_L_pos;
-    auto& dL_d_scale = context.dL_d_scale;
-    auto& H_L_scale = context.H_L_scale;
-    auto& dL_d_rot = context.dL_d_rot;
-    auto& H_L_rot = context.H_L_rot;
-    auto& dL_d_opacity = context.dL_d_opacity;
-    auto& H_L_opacity = context.H_L_opacity;
-    auto& dL_d_color = context.dL_d_color;
-    auto& H_L_color = context.H_L_color;
+    auto dL_d_pos = context.dL_d_pos;
+    auto H_L_pos = context.H_L_pos;
+    auto dL_d_scale = context.dL_d_scale;
+    auto H_L_scale = context.H_L_scale;
+    auto dL_d_rot = context.dL_d_rot;
+    auto H_L_rot = context.H_L_rot;
+    auto dL_d_opacity = context.dL_d_opacity;
+    auto H_L_opacity = context.H_L_opacity;
+    auto dL_d_color = context.dL_d_color;
+    auto H_L_color = context.H_L_color;
     launch_solve_and_update_all_attributes_kernel(
         dL_d_pos, H_L_pos,
         dL_d_scale, H_L_scale,

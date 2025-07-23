@@ -320,32 +320,32 @@ template <uint32_t CDIM>
 void launch_compute_intermediate_derivatives_kernel(
     const bool packed,
     // --- Forward Pass Inputs ---
-    const at::Tensor &means2d,
-    const at::Tensor &conics,
-    const at::Tensor &colors,
-    const at::Tensor &opacities,
-    const at::optional<at::Tensor> &backgrounds,
-    const at::optional<at::Tensor> &masks,
+    const at::Tensor means2d,
+    const at::Tensor conics,
+    const at::Tensor colors,
+    const at::Tensor opacities,
+    const at::optional<at::Tensor> backgrounds,
+    const at::optional<at::Tensor> masks,
     const uint32_t image_width,
     const uint32_t image_height,
     const uint32_t tile_size,
-    const at::Tensor &tile_offsets,
-    const at::Tensor &flatten_ids,
+    const at::Tensor tile_offsets,
+    const at::Tensor flatten_ids,
     // --- Forward Pass Outputs ---
-    const at::Tensor &render_alphas,
-    const at::Tensor &last_ids,
+    const at::Tensor render_alphas,
+    const at::Tensor last_ids,
     // --- Backward Pass Inputs (Output Gradients) ---
-    const at::Tensor &v_render_colors,
-    const at::Tensor &v_render_alphas,
+    const at::Tensor v_render_colors,
+    const at::Tensor v_render_alphas,
     // --- INTERMEDIATE OUTPUTS (per-Gaussian) ---
-    at::Tensor &dc_dcSH,
-    at::Tensor &dc_dG,
-    at::Tensor &dG_dmean2d,
-    at::Tensor &dG_dSigma,
-    at::Tensor &H_G_mean2d,
-    at::Tensor &H_G_sigma,
-    at::Tensor &H_G_mixed,
-    at::Tensor &dc_opac
+    at::Tensor dc_dcSH,
+    at::Tensor dc_dG,
+    at::Tensor dG_dmean2d,
+    at::Tensor dG_dSigma,
+    at::Tensor H_G_mean2d,
+    at::Tensor H_G_sigma,
+    at::Tensor H_G_mixed,
+    at::Tensor dc_opac
 ) {
     uint32_t C = tile_offsets.size(0);
     uint32_t N = means2d.size(0);
@@ -411,29 +411,29 @@ void launch_compute_intermediate_derivatives_kernel(
 #define __INS__(CDIM)                                                                      \
     template void launch_compute_intermediate_derivatives_kernel<CDIM>(                      \
         const bool packed,                                                                 \
-        const at::Tensor &means2d,                                                         \
-        const at::Tensor &conics,                                                          \
-        const at::Tensor &colors,                                                          \
-        const at::Tensor &opacities,                                                       \
-        const at::optional<at::Tensor> &backgrounds,                                       \
-        const at::optional<at::Tensor> &masks,                                             \
+        const at::Tensor means2d,                                                         \
+        const at::Tensor conics,                                                          \
+        const at::Tensor colors,                                                          \
+        const at::Tensor opacities,                                                       \
+        const at::optional<at::Tensor> backgrounds,                                       \
+        const at::optional<at::Tensor> masks,                                             \
         const uint32_t image_width,                                                        \
         const uint32_t image_height,                                                       \
         const uint32_t tile_size,                                                          \
-        const at::Tensor &tile_offsets,                                                    \
-        const at::Tensor &flatten_ids,                                                     \
-        const at::Tensor &render_alphas,                                                   \
-        const at::Tensor &last_ids,                                                        \
-        const at::Tensor &v_render_colors,                                                 \
-        const at::Tensor &v_render_alphas,                                                 \
-        at::Tensor &dc_dcSH,                                                               \
-        at::Tensor &dc_dG,                                                                 \
-        at::Tensor &dG_dmean2d,                                                            \
-        at::Tensor &dG_dSigma,                                                             \
-        at::Tensor &H_G_mean2d,                                                            \
-        at::Tensor &H_G_sigma,                                                             \
-        at::Tensor &H_G_mixed,                                                             \
-        at::Tensor &dc_opac);
+        const at::Tensor tile_offsets,                                                    \
+        const at::Tensor flatten_ids,                                                     \
+        const at::Tensor render_alphas,                                                   \
+        const at::Tensor last_ids,                                                        \
+        const at::Tensor v_render_colors,                                                 \
+        const at::Tensor v_render_alphas,                                                 \
+        at::Tensor dc_dcSH,                                                               \
+        at::Tensor dc_dG,                                                                 \
+        at::Tensor dG_dmean2d,                                                            \
+        at::Tensor dG_dSigma,                                                             \
+        at::Tensor H_G_mean2d,                                                            \
+        at::Tensor H_G_sigma,                                                             \
+        at::Tensor H_G_mixed,                                                             \
+        at::Tensor dc_opac);
 
 __INS__(1)
 __INS__(2)

@@ -126,12 +126,12 @@ __global__ void chain_rule_color_position_global_kernel(
 }
 
 void launch_chain_rule_color_position_kernel(
-    const at::Tensor& p_k,             // [...,3]
-    const at::Tensor& camera_center,   // [3]
-    const at::Tensor& color_dir_grad,  // [...,3]
-    const at::Tensor& color_dir_hess,  // [...,6]
-    at::Tensor&       color_pos_grad,  // [...,3]
-    at::Tensor&       color_pos_hess   // [...,6]
+    const at::Tensor p_k,             // [...,3]
+    const at::Tensor camera_center,   // [3]
+    const at::Tensor color_dir_grad,  // [...,3]
+    const at::Tensor color_dir_hess,  // [...,6]
+    at::Tensor       color_pos_grad,  // [...,3]
+    at::Tensor       color_pos_hess   // [...,6]
 ) {
     const uint32_t N = p_k.numel() / 3;
     if (N == 0) return;
@@ -410,13 +410,13 @@ __global__ void spherical_harmonics_LN_kernel(
 
 void launch_spherical_harmonics_LN_kernel(
     const uint32_t      degrees_to_use,
-    const at::Tensor&   dirs,       // [..., 3]
-    const at::Tensor&   coeffs,     // [..., K, 3]
-    const at::Tensor&   v_colors,   // dc_RAST / dc_SH
+    const at::Tensor   dirs,       // [..., 3]
+    const at::Tensor   coeffs,     // [..., K, 3]
+    const at::Tensor   v_colors,   // dc_RAST / dc_SH
     //outputs
-    at::Tensor&         v_coeffs,   // dc_RAST / dc_attribute
-    at::Tensor&         v_dir,      // [..., 3]     (dc_RAST / dr)
-    at::Tensor&         H_dir       // [..., 6]     (d2c_RAST / dr2)
+    at::Tensor         v_coeffs,   // dc_RAST / dc_attribute
+    at::Tensor         v_dir,      // [..., 3]     (dc_RAST / dr)
+    at::Tensor         H_dir       // [..., 6]     (d2c_RAST / dr2)
 ) {
     const uint32_t K = coeffs.size(-2);
     const uint32_t N = dirs.numel() / 3;
@@ -495,9 +495,9 @@ __global__ void color_solve_fwd_kernel(
 void launch_color_solve_fwd(
     const uint32_t N,
     const uint32_t K,
-    const at::Tensor& dc_dcSH,   // [..., K, 3]
-    const at::Tensor& B,         // [..., K, 3]
-    at::Tensor& grad_c           // [..., 3]
+    const at::Tensor dc_dcSH,   // [..., K, 3]
+    const at::Tensor B,         // [..., K, 3]
+    at::Tensor grad_c           // [..., 3]
 ) {
   const auto n_elements = N*3;
   const dim3 threads(256);

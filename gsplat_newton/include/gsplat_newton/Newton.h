@@ -34,17 +34,17 @@ namespace gsplat_newton {
  */
 void local_newton_backward(
     const LocalNewtonContext& context,
-    at::Tensor& means,
-    at::Tensor& scales,
-    at::Tensor& quats,
-    at::Tensor& opacities,
-    at::Tensor& sh_coeffs,
-    const at::Tensor& dL_d_color_img,
-    const at::Tensor& H_L_color_img, // Assuming this is passed in
-    const at::Tensor& render_alphas,
-    const at::Tensor& last_ids,
-    const at::Tensor& tile_offsets,
-    const at::Tensor& flatten_ids,
+    at::Tensor means,
+    at::Tensor scales,
+    at::Tensor quats,
+    at::Tensor opacities,
+    at::Tensor sh_coeffs,
+    const at::Tensor dL_d_color_img,
+    const at::Tensor H_L_color_img, // Assuming this is passed in
+    const at::Tensor render_alphas,
+    const at::Tensor last_ids,
+    const at::Tensor tile_offsets,
+    const at::Tensor flatten_ids,
     uint32_t image_width,
     uint32_t image_height
 );
@@ -65,25 +65,25 @@ void solve_and_update(
 
 // Forward declaration for the unified CUDA kernel launcher
 void launch_solve_and_update_all_attributes_kernel(
-    const at::Tensor& dL_d_pos,
-    const at::Tensor& H_L_pos,
-    const at::Tensor& dL_d_scale,
-    const at::Tensor& H_L_scale,
-    const at::Tensor& dL_d_rot,
-    const at::Tensor& H_L_rot,
-    const at::Tensor& dL_d_opacity,
-    const at::Tensor& H_L_opacity,
-    const at::Tensor& dL_d_color,
-    const at::Tensor& H_L_color, // Placeholder for color Hessian
+    const at::Tensor dL_d_pos,
+    const at::Tensor H_L_pos,
+    const at::Tensor dL_d_scale,
+    const at::Tensor H_L_scale,
+    const at::Tensor dL_d_rot,
+    const at::Tensor H_L_rot,
+    const at::Tensor dL_d_opacity,
+    const at::Tensor H_L_opacity,
+    const at::Tensor dL_d_color,
+    const at::Tensor H_L_color, // Placeholder for color Hessian
     // Tensors from context needed for backprojection
-    const at::Tensor& U_k_bases, // Basis for position update
-    const at::Tensor& T_k_matrices, // Basis for scale update
+    const at::Tensor U_k_bases, // Basis for position update
+    const at::Tensor T_k_matrices, // Basis for scale update
     // Gaussian parameters to be updated (in-out)
-    at::Tensor& means,
-    at::Tensor& scales,
-    at::Tensor& quats,
-    at::Tensor& opacities,
-    at::Tensor& sh_coeffs
+    at::Tensor means,
+    at::Tensor scales,
+    at::Tensor quats,
+    at::Tensor opacities,
+    at::Tensor sh_coeffs
 );
 
 } // namespace gsplat

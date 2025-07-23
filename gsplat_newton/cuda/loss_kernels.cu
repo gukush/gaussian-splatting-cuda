@@ -363,7 +363,7 @@ __global__ void fusedssim_color_backwardCUDA_LN(
          + /* from g1^2 term */
            ( ( g0/(f2*f3)   -  ((f2*g3+f3*g2)/(f2*f2*f3*f3))*f0 ) * g1*g1 )
          /* + analogous terms for g2^2 and g3^2 from eq (13) */
-         + ( (-(f0 * g1 + f1 * g0) / (f2 * f2 * f3)) + (g2_num / g2_den) ) * g2 * g2;
+         + ( (-(f0 * g1 + f1 * g0) / (f2 * f2 * f3)) + (g2_num / g2_den) ) * g2 * g2
          + ( (-(f0 * g1 + f1 * g0) / (f2 * f3 * f3)) + (g3_num / g3_den) ) * g3 * g3
          ;
 
@@ -462,8 +462,8 @@ std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Te
 fusedssim_LN(
     float C1,
     float C2,
-    torch::Tensor& img1,
-    torch::Tensor& img2,
+    torch::Tensor img1,
+    torch::Tensor img2,
     bool train) {
     const at::cuda::OptionalCUDAGuard device_guard(device_of(img1));
     int B = img1.size(0);
@@ -511,14 +511,14 @@ std::tuple<torch::Tensor, torch::Tensor>
 fusedssim_backward_LN(
     float C1,
     float C2,
-    torch::Tensor& img1,
-    torch::Tensor& img2,
-    torch::Tensor& dL_dmap,
-    torch::Tensor& mu1_map,
-    torch::Tensor& mu2_map,
-    torch::Tensor& s1_map,
-    torch::Tensor& s2_map,
-    torch::Tensor& s12_map) {
+    torch::Tensor img1,
+    torch::Tensor img2,
+    torch::Tensor dL_dmap,
+    torch::Tensor mu1_map,
+    torch::Tensor mu2_map,
+    torch::Tensor s1_map,
+    torch::Tensor s2_map,
+    torch::Tensor s12_map) {
     const at::cuda::OptionalCUDAGuard device_guard(device_of(img1));
     int B = img1.size(0);
     int CH = img1.size(1);

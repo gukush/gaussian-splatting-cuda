@@ -47,11 +47,11 @@ namespace gsplat_newton {
  */
 /*
 void projection_fwd_with_derivatives(
-    const torch::Tensor& means3D,
-    const torch::Tensor& rotations,
-    const torch::Tensor& scales,
-    const torch::Tensor& viewmat,
-    const torch::Tensor& K,
+    const torch::Tensor means3D,
+    const torch::Tensor rotations,
+    const torch::Tensor scales,
+    const torch::Tensor viewmat,
+    const torch::Tensor K,
     uint32_t image_width,
     uint32_t image_height,
     LocalNewtonContext& context // Output parameter
@@ -108,8 +108,8 @@ projection_ewa_3dgs_fused_fwd_LN(
  */
 torch::Tensor sh_fwd_with_derivatives(
     int degree,
-    const torch::Tensor& view_dirs,
-    const torch::Tensor& sh_coeffs,
+    const torch::Tensor view_dirs,
+    const torch::Tensor sh_coeffs,
     LocalNewtonContext& context // Output parameter for derivatives
 );
 
@@ -124,16 +124,16 @@ void chain_rule_sh_position(LocalNewtonContext& context);
 
 std::tuple<at::Tensor, at::Tensor, at::Tensor> spherical_harmonics_LN(
     const uint32_t      degrees_to_use,
-    const at::Tensor&   dirs,       // [..., 3]
-    const at::Tensor&   coeffs,     // [..., K, 3]
-    const at::Tensor& v_colors
+    const at::Tensor   dirs,       // [..., 3]
+    const at::Tensor   coeffs,     // [..., K, 3]
+    const at::Tensor v_colors
 );
 
 std::pair<at::Tensor,at::Tensor> chain_rule_color_position(
-    const at::Tensor& p_k,             // [...,3]
-    const at::Tensor& camera_center,   // [3]
-    const at::Tensor& color_dir_grad,  // [...,3]
-    const at::Tensor& color_dir_hess   // [...,6]
+    const at::Tensor p_k,             // [...,3]
+    const at::Tensor camera_center,   // [3]
+    const at::Tensor color_dir_grad,  // [...,3]
+    const at::Tensor color_dir_hess   // [...,6]
 );
 
 // ========================================================================
@@ -151,8 +151,8 @@ std::pair<at::Tensor,at::Tensor> chain_rule_color_position(
  * tensor (∂L/∂c), and the second derivative tensor (∂²L/∂c²).
  */
 std::tuple<torch::Tensor, torch::Tensor, torch::Tensor> compute_loss_and_derivatives(
-    const torch::Tensor& rendered_image,
-    const torch::Tensor& gt_image,
+    const torch::Tensor rendered_image,
+    const torch::Tensor gt_image,
     float lambda_ssim
 );
 
@@ -163,8 +163,8 @@ std::tuple<
 > fusedssim_LN(
     float C1,
     float C2,
-    torch::Tensor& img1,
-    torch::Tensor& img2,
+    torch::Tensor img1,
+    torch::Tensor img2,
     bool train
 );
 
@@ -175,14 +175,14 @@ std::tuple<
 > fusedssim_backward_LN(
     float C1,
     float C2,
-    torch::Tensor& img1,
-    torch::Tensor& img2,
-    torch::Tensor& dL_dmap,
-    torch::Tensor& mu1_map,
-    torch::Tensor& mu2_map,
-    torch::Tensor& s1_map,
-    torch::Tensor& s2_map,
-    torch::Tensor& s12_map
+    torch::Tensor img1,
+    torch::Tensor img2,
+    torch::Tensor dL_dmap,
+    torch::Tensor mu1_map,
+    torch::Tensor mu2_map,
+    torch::Tensor s1_map,
+    torch::Tensor s2_map,
+    torch::Tensor s12_map
 );
 
 /**
@@ -197,8 +197,8 @@ std::tuple<
 void aggregate_intermediate_derivatives(
     LocalNewtonContext& context,
     const gs::RenderOutput& render_output,
-    const torch::Tensor& dL_dcolor,
-    const torch::Tensor& d2L_dcolor2
+    const torch::Tensor dL_dcolor,
+    const torch::Tensor d2L_dcolor2
 );
 
 
@@ -246,34 +246,34 @@ std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor,
            torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor>
 assemble_newton_derivatives(
     // Input tensors from intermediate derivatives
-    const torch::Tensor& dc_dcSH_totals,
-    const torch::Tensor& dc_dG_totals,
-    const torch::Tensor& dG_dmean2d_totals,
-    const torch::Tensor& dG_dSigma_totals,
-    const torch::Tensor& H_G_mean2d_totals,
-    const torch::Tensor& H_G_sigma_totals,
-    const torch::Tensor& H_G_mixed_totals,
-    const torch::Tensor& dc_dG_opacity_totals,
-    const torch::Tensor& dG_dSigma_opacity_totals,
-    const torch::Tensor& H_G_sigma_opacity_totals,
+    const torch::Tensor dc_dcSH_totals,
+    const torch::Tensor dc_dG_totals,
+    const torch::Tensor dG_dmean2d_totals,
+    const torch::Tensor dG_dSigma_totals,
+    const torch::Tensor H_G_mean2d_totals,
+    const torch::Tensor H_G_sigma_totals,
+    const torch::Tensor H_G_mixed_totals,
+    const torch::Tensor dc_dG_opacity_totals,
+    const torch::Tensor dG_dSigma_opacity_totals,
+    const torch::Tensor H_G_sigma_opacity_totals,
     // Projection derivatives
-    const torch::Tensor& jacobians,
-    const torch::Tensor& dSigma_dpx,
-    const torch::Tensor& dSigma_dpy,
-    const torch::Tensor& dSigma_dpz,
-    const torch::Tensor& dc_sh_dp,
-    const torch::Tensor& H_pi_px,
-    const torch::Tensor& H_pi_py,
-    const torch::Tensor& H_c_sh_p,
-    const torch::Tensor& H_Sigma_pxx,
-    const torch::Tensor& H_Sigma_pxy,
-    const torch::Tensor& H_Sigma_pyy,
-    const torch::Tensor& dSigma_dtheta_inputs,
-    const torch::Tensor& d2Sigma_dtheta2_inputs,
-    const torch::Tensor& T_matrices,
-    const torch::Tensor& conics_2d,
-    const torch::Tensor& p_k,
-    const torch::Tensor& camera_pos
+    const torch::Tensor jacobians,
+    const torch::Tensor dSigma_dpx,
+    const torch::Tensor dSigma_dpy,
+    const torch::Tensor dSigma_dpz,
+    const torch::Tensor dc_sh_dp,
+    const torch::Tensor H_pi_px,
+    const torch::Tensor H_pi_py,
+    const torch::Tensor H_c_sh_p,
+    const torch::Tensor H_Sigma_pxx,
+    const torch::Tensor H_Sigma_pxy,
+    const torch::Tensor H_Sigma_pyy,
+    const torch::Tensor dSigma_dtheta_inputs,
+    const torch::Tensor d2Sigma_dtheta2_inputs,
+    const torch::Tensor T_matrices,
+    const torch::Tensor conics_2d,
+    const torch::Tensor p_k,
+    const torch::Tensor camera_pos
 );
 
 
@@ -317,41 +317,41 @@ assemble_newton_derivatives(
 
 void launch_assemble_newton_derivatives_kernel(
     const int num_gaussians,
-    const at::Tensor& dc_dcSH_totals,
-    const at::Tensor& dc_dG_totals,
-    const at::Tensor& dG_dmean2d_totals,
-    const at::Tensor& dG_dSigma_totals,
-    const at::Tensor& H_G_mean2d_totals,
-    const at::Tensor& H_G_sigma_totals,
-    const at::Tensor& H_G_mixed_totals,
-    const at::Tensor& dc_dG_opacity_totals,
-    const at::Tensor& dG_dSigma_opacity_totals,
-    const at::Tensor& H_G_sigma_opacity_totals,
-    at::Tensor& dc_dopacity,
-    at::Tensor& d2c_dopacity2,
-    const at::Tensor& jacobians,
-    const at::Tensor& dSigma_dpx,
-    const at::Tensor& dSigma_dpy,
-    const at::Tensor& dSigma_dpz,
-    const at::Tensor& dc_sh_dp,
-    const at::Tensor& H_pi_px,
-    const at::Tensor& H_pi_py,
-    const at::Tensor& H_c_sh_p,
-    const at::Tensor& H_Sigma_pxx,
-    const at::Tensor& H_Sigma_pxy,
-    const at::Tensor& H_Sigma_pyy,
-    const at::Tensor& dSigma_dtheta_inputs,
-    const at::Tensor& d2Sigma_dtheta2_inputs,
-    const at::Tensor& T_matrices,
-    const at::Tensor& conics_2d,
-    const at::Tensor& p_k,
-    const at::Tensor& camera_pos,
-    at::Tensor& d_c_vk,
-    at::Tensor& H_c_vk,
-    at::Tensor& dc_dlambda,
-    at::Tensor& d2c_dlambda2,
-    at::Tensor& dc_dtheta,
-    at::Tensor& d2c_dtheta2
+    const at::Tensor dc_dcSH_totals,
+    const at::Tensor dc_dG_totals,
+    const at::Tensor dG_dmean2d_totals,
+    const at::Tensor dG_dSigma_totals,
+    const at::Tensor H_G_mean2d_totals,
+    const at::Tensor H_G_sigma_totals,
+    const at::Tensor H_G_mixed_totals,
+    const at::Tensor dc_dG_opacity_totals,
+    const at::Tensor dG_dSigma_opacity_totals,
+    const at::Tensor H_G_sigma_opacity_totals,
+    at::Tensor dc_dopacity,
+    at::Tensor d2c_dopacity2,
+    const at::Tensor jacobians,
+    const at::Tensor dSigma_dpx,
+    const at::Tensor dSigma_dpy,
+    const at::Tensor dSigma_dpz,
+    const at::Tensor dc_sh_dp,
+    const at::Tensor H_pi_px,
+    const at::Tensor H_pi_py,
+    const at::Tensor H_c_sh_p,
+    const at::Tensor H_Sigma_pxx,
+    const at::Tensor H_Sigma_pxy,
+    const at::Tensor H_Sigma_pyy,
+    const at::Tensor dSigma_dtheta_inputs,
+    const at::Tensor d2Sigma_dtheta2_inputs,
+    const at::Tensor T_matrices,
+    const at::Tensor conics_2d,
+    const at::Tensor p_k,
+    const at::Tensor camera_pos,
+    at::Tensor d_c_vk,
+    at::Tensor H_c_vk,
+    at::Tensor dc_dlambda,
+    at::Tensor d2c_dlambda2,
+    at::Tensor dc_dtheta,
+    at::Tensor d2c_dtheta2
 );
 
 
@@ -390,35 +390,35 @@ void launch_projection_ewa_3dgs_fused_fwd_kernel_LN(
 );
 
 void launch_solve_and_update_all_attributes_kernel(
-    const at::Tensor& dL_d_pos, const at::Tensor& H_L_pos,
-    const at::Tensor& dL_d_scale, const at::Tensor& H_L_scale,
-    const at::Tensor& dL_d_rot, const at::Tensor& H_L_rot,
-    const at::Tensor& dL_d_opacity, const at::Tensor& H_L_opacity,
-    const at::Tensor& dL_d_color, const at::Tensor& H_L_color,
-    const at::Tensor& U_k_bases, const at::Tensor& T_k_matrices,
-    at::Tensor& means, at::Tensor& scales, at::Tensor& quats,
-    at::Tensor& opacities, at::Tensor& sh_coeffs
+    const at::Tensor dL_d_pos, const at::Tensor H_L_pos,
+    const at::Tensor dL_d_scale, const at::Tensor H_L_scale,
+    const at::Tensor dL_d_rot, const at::Tensor H_L_rot,
+    const at::Tensor dL_d_opacity, const at::Tensor H_L_opacity,
+    const at::Tensor dL_d_color, const at::Tensor H_L_color,
+    const at::Tensor U_k_bases, const at::Tensor T_k_matrices,
+    at::Tensor means, at::Tensor scales, at::Tensor quats,
+    at::Tensor opacities, at::Tensor sh_coeffs
 );
 
 
 void launch_spherical_harmonics_LN_kernel(
     const uint32_t      degrees_to_use,
-    const at::Tensor&   dirs,       // [..., 3]
-    const at::Tensor&   coeffs,     // [..., K, 3]
-    const at::Tensor&   v_colors,   // dc_RAST / dc_SH
+    const at::Tensor   dirs,       // [..., 3]
+    const at::Tensor   coeffs,     // [..., K, 3]
+    const at::Tensor   v_colors,   // dc_RAST / dc_SH
     //outputs
-    at::Tensor&         v_coeffs,   // dc_RAST / dc_attribute
-    at::Tensor&         v_dir,      // [..., 3]     (dc_RAST / dr)
-    at::Tensor&         H_dir       // [..., 6]     (d2c_RAST / dr2)
+    at::Tensor         v_coeffs,   // dc_RAST / dc_attribute
+    at::Tensor         v_dir,      // [..., 3]     (dc_RAST / dr)
+    at::Tensor         H_dir       // [..., 6]     (d2c_RAST / dr2)
 );
 
 void launch_chain_rule_color_position_kernel(
-    const at::Tensor& p_k,             // [...,3]
-    const at::Tensor& camera_center,   // [3]
-    const at::Tensor& color_dir_grad,  // [...,3]
-    const at::Tensor& color_dir_hess,  // [...,6]
-    at::Tensor&       color_pos_grad,  // [...,3]
-    at::Tensor&       color_pos_hess   // [...,6]
+    const at::Tensor p_k,             // [...,3]
+    const at::Tensor camera_center,   // [3]
+    const at::Tensor color_dir_grad,  // [...,3]
+    const at::Tensor color_dir_hess,  // [...,6]
+    at::Tensor       color_pos_grad,  // [...,3]
+    at::Tensor       color_pos_hess   // [...,6]
 );
 
 
