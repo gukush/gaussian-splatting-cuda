@@ -80,7 +80,7 @@ __global__ void projection_ewa_3dgs_fused_fwd_kernel_LN(
 
     // CALCULATING dr/dpk and d2r/dpk2
     vec3 p_k = glm::make_vec3(means);
-    mat3 R_c2w = transpose(R_w2c);
+    mat3 R_c2w = glm::transpose(R);
     vec3 camera_origin = -R_c2w * t;
     vec3 d = p_k - camera_origin;
     mat3 dr_dp_local = mat3(0.f);

@@ -154,10 +154,37 @@ compute_d2c_dpk2_local(
     // Term 3: (∂πₖ/∂pₖ)ᵀ (∂²Gₖ/∂πₖ²) (∂πₖ/∂pₖ)
     // Construct H_G_pi with column vectors as per GLM convention
     mat2 H_G_pi(vec2(H_G_mean2d.x, H_G_mean2d.y), vec2(H_G_mean2d.y, H_G_mean2d.z));
-    // Replaced loops with direct matrix multiplication
-    H += glm::transpose(J) * H_G_pi * J;
-
-    // Term 4: (∂Σₖ/∂pₖ)ᵀ : (∂²Gₖ/∂Σₖ²) : (∂Σₖ/∂pₖ)
+    // Replaced direct matrix multiplication with loops due to GLM error
+    //H += glm::transpose(J) * H_G_pi * J;
+    mat3x2 J_T = glm::transpose(J);
+    // Step 1: Compute the intermediate matrix: temp_mat = J_T * H_G_pi (a 3x2 matrix)
+    mat3x2 temp_mat;
+    // First column of temp_mat
+    temp_mat[0][0] = J_T[0][0] * H_G_pi[0][0] + J_T[0][1] * H_G_pi[1][0];
+    temp_mat[1][0] = J_T[1][0] * H_G_pi[0][0] + J_T[1][1] * H_G_pi[1][0];
+    temp_mat[2][0] = J_T[2][0] * H_G_pi[0][0] + J_T[2][1] * H_G_pi[1][0];
+    // Second column of temp_mat
+    temp_mat[0][1] = J_T[0][0] * H_G_pi[0][1] + J_T[0][1] * H_G_pi[1][1];
+    temp_mat[1][1] = J_T[1][0] * H_G_pi[0][1] + J_T[1][1] * H_G_pi[1][1];
+    temp_mat[2][1] = J_T[2][0] * H_G_pi[0][1] + J_T[2][1] * H_G_pi[1][1];
+    mat3 Jt_H_J;
+    // First column of Jt_H_J
+    Jt_H_J[0][0] = temp_mat[0][0] * J[0][0] + temp_mat[0][1] * J[1][0];
+    Jt_H_J[1][0] = temp_mat[1][0] * J[0][0] + temp_mat[1][1] * J[1][0];
+    Jt_H_J[2][0] = temp_mat[2][0] * J[0][0] + temp_mat[2][1] * J[1][0];
+    // Second column of Jt_H_J
+    Jt_H_J[0][1] = temp_mat[0][0] * J[0][1] + temp_mat[0][1] * J[1][1];
+    Jt_H_J[1][1] = temp_mat[1][0] * J[0][1] + temp_mat[1][1] * J[1][1];
+    Jt_H_J[2][1] = temp_mat[2][0] * J[0][1] + temp_mat[2][1] * J[1][1];
+    // Third column of Jt_H_J
+    Jt_H_J[0][2] = temp_mat[0][0] * J[0][2] + temp_mat[0][1] * J[1][2];
+    Jt_H_J[1][2] = temp_mat[1][0] * J[0][2] + temp_mat[1][1] * J[1][2];
+    Jt_H_J[2][2] = temp_mat[2][0] * J[0][2] + temp_mat[2][1] * J[1][2];
+    // Step 3: Add the result to H
+    H[0][0] += Jt_H_J[0][0]; H[0][1] += Jt_H_J[0][1]; H[0][2] += Jt_H_J[0][2];
+    H[1][0] += Jt_H_J[1][0]; H[1][1] += Jt_H_J[1][1]; H[1][2] += Jt_H_J[1][2];
+    H[2][0] += Jt_H_J[2][0]; H[2][1] += Jt_H_J[2][1]; H[2][2] += Jt_H_J[2][2];
+        // Term 4: (∂Σₖ/∂pₖ)ᵀ : (∂²Gₖ/∂Σₖ²) : (∂Σₖ/∂pₖ)
     {
         const mat2 dS_dp[3] = {dSigma_dpx, dSigma_dpy, dSigma_dpz};
         for (int i = 0; i < 3; i++) {

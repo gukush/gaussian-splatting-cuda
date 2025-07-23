@@ -196,7 +196,7 @@ __global__ void chain_rule_color_position_batched(
     );
 }
 template <typename scalar_t>
-__device__ void sh_coeffs_to_color_fast_LN_old(
+__device__ void sh_coeffs_to_color_fast_LN(
     const uint32_t degree,    // degree of SH to be evaluated
     const uint32_t c,         // color channel
     const vec3 &dir,          // [3]

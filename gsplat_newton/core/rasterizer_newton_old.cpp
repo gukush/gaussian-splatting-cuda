@@ -1,5 +1,5 @@
-#include "core/rasterizer.hpp"
-#include "core/local_newton_context.hpp" // Your new header
+#include "gsplat_newton/rasterizer.hpp"
+#include "gsplat_newton/local_newton_context.hpp" // Your new header
 #include "Ops.h"
 #include "core/rasterizer_autograd.hpp"
 #include <torch/torch.h>
