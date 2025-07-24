@@ -67,7 +67,7 @@ void local_newton_backward(
     auto& H_G_mean2d_totals = std::get<4>(intermediate_derivs);
     auto& H_G_sigma_totals = std::get<5>(intermediate_derivs);
     auto& H_G_mixed_totals = std::get<6>(intermediate_derivs);
-    auto& d_opac = std::get<7>(intermediate_derivs);
+    auto& dc_dopac = std::get<7>(intermediate_derivs);
 
     // --- Stage 2: "Backward pass" for Spherical Harmonics
     //
@@ -116,7 +116,11 @@ void local_newton_backward(
         context.T_matrices,
         context.conics,
         means, // p_k
-        context.campos // camera_pos
+        context.campos,// camera_pos
+        dc_dopac,
+        dcRAST_dck,
+        context.dL_d_color_img,
+        context.H_L_color_img
     );
 
     context.dL_d_pos      = std::get<0>(newton_systems);
@@ -125,8 +129,11 @@ void local_newton_backward(
     context.H_L_scale     = std::get<3>(newton_systems);
     context.dL_d_rot      = std::get<4>(newton_systems);
     context.H_L_rot       = std::get<5>(newton_systems);
-    // context.dL_d_opacity  = std::get<6>(newton_systems);
-    // context.H_L_opacity   = std::get<7>(newton_systems);
+    context.dL_d_opacity  = std::get<6>(newton_systems);
+    context.H_L_opacity   = std::get<7>(newton_systems);
+    context.dL_d_color    = std::get<8>(newton_systems);
+    context.H_L_color     = std::get<9>(newton_systems);
+
     // We will need to compute color derivatives separately or assume they are part of another tensor.
     // For now, creating placeholder tensors for color update.
     //context.dL_d_color = torch::zeros({means.size(0), 3}, means.options());

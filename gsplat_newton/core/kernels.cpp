@@ -390,7 +390,9 @@ compute_intermediate_derivatives_bwd(
 
 
 // Wrapper function to call all split kernels
-std::tuple<at::Tensor, at::Tensor, at::Tensor, at::Tensor, at::Tensor, at::Tensor>
+std::tuple<at::Tensor, at::Tensor, at::Tensor,
+    at::Tensor, at::Tensor, at::Tensor, at::Tensor,
+    at::Tensor, at::Tensor, at::Tensor>
 assemble_newton_derivatives_split(
     // Intermediate derivatives
     const at::Tensor dc_dcSH_totals,
@@ -412,19 +414,27 @@ assemble_newton_derivatives_split(
     const at::Tensor T_matrices,
     const at::Tensor conics_2d,
     const at::Tensor p_k,
-    const at::Tensor camera_pos
+    const at::Tensor camera_pos,
+    const at::Tensor dc_dopac,
+    const at::Tensor dcRAST_dck,
+    const at::Tensor dL_dc,
+    const at::Tensor H_L_dc
 ) {
     const int num_gaussians = p_k.size(0);
+    const int num_coeffs = dcRAST_dck.size(-2);
     auto options = p_k.options();
 
     // Allocate output tensors
-    auto d_c_vk = torch::empty({num_gaussians, 2}, options);
-    auto H_c_vk = torch::empty({num_gaussians, 2, 2}, options);
-    auto dc_dlambda = torch::empty({num_gaussians, 2}, options);
-    auto d2c_dlambda2 = torch::empty({num_gaussians, 2, 2}, options);
-    auto dc_dtheta = torch::empty({num_gaussians}, options);
-    auto d2c_dtheta2 = torch::empty({num_gaussians}, options);
-
+    auto dL_dvk = torch::empty({num_gaussians, 2}, options);
+    auto H_L_dvk = torch::empty({num_gaussians, 2, 2}, options);
+    auto dL_dlambda = torch::empty({num_gaussians, 2}, options);
+    auto H_L_dlambda = torch::empty({num_gaussians, 2, 2}, options);
+    auto dL_dtheta = torch::empty({num_gaussians}, options);
+    auto H_L_dtheta = torch::empty({num_gaussians}, options);
+    auto dL_dopac = torch::empty({num_gaussians},options);
+    auto H_L_dopac = torch::empty({num_gaussians},options);
+    auto dL_dcolor = torch::empty({num_gaussians, num_coeffs, 3}, options);
+    auto H_L_dcolor = torch::empty({num_gaussians, num_coeffs, 3}, options);
     // Launch split kernels
         launch_compute_position_derivatives_kernel(
             num_gaussians,
@@ -443,9 +453,11 @@ assemble_newton_derivatives_split(
             H_Sigma_dp,
             conics_2d,
             p_k,
+            dL_dc,
+            H_L_dc,
             camera_pos,
-            d_c_vk,
-            H_c_vk
+            dL_dvk,
+            H_L_dvk
         );
 
         launch_compute_scale_derivatives_kernel(
@@ -455,8 +467,10 @@ assemble_newton_derivatives_split(
             H_G_sigma_totals,
             T_matrices,
             conics_2d,
-            dc_dlambda,
-            d2c_dlambda2
+            dL_dc,
+            H_L_dc,
+            dL_dlambda,
+            H_L_dlambda
         );
 
         launch_compute_rotation_derivatives_kernel(
@@ -467,154 +481,36 @@ assemble_newton_derivatives_split(
             dSigma_dtheta_inputs,
             d2Sigma_dtheta2_inputs,
             conics_2d,
-            dc_dtheta,
-            d2c_dtheta2
+            dL_dc,
+            H_L_dc,
+            dL_dtheta,
+            H_L_dtheta
         );
-        /*
+        launch_compute_opacity_derivatives_kernel(
+            num_gaussians,
+            dc_dopac,
+            dL_dc,
+            H_L_dc,
+            dL_dopac,
+            H_L_dopac
+        );
         launch_compute_color_derivatives_kernel(
             num_gaussians,
+            num_coeffs,
             dc_dcSH_totals,
-            dc_sh_dcolor,
-            dc_dcolor,
-            d2c_dcolor2
+            dL_dc,
+            H_L_dc,
+            dL_dcolor,
+            H_L_dcolor
         );
-        */
 
-    return std::make_tuple(d_c_vk, H_c_vk, dc_dlambda, d2c_dlambda2,
-                          dc_dtheta, d2c_dtheta2);
+
+    return std::make_tuple(dL_dvk, H_L_dvk, dL_dlambda, H_L_dlambda,
+                          dL_dtheta, H_L_dtheta,
+                          dL_dopac, H_L_dopac,
+                          dL_dcolor, H_L_dcolor);
 }
 
-/*
-std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor,
-           torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor>
-assemble_newton_derivatives(
-    // Input tensors from intermediate derivatives
-    const torch::Tensor dc_dcSH_totals,
-    const torch::Tensor dc_dG_totals,
-    const torch::Tensor dG_dmean2d_totals,
-    const torch::Tensor dG_dSigma_totals,
-    const torch::Tensor H_G_mean2d_totals,
-    const torch::Tensor H_G_sigma_totals,
-    const torch::Tensor H_G_mixed_totals,
-    const torch::Tensor dc_dG_opacity_totals,
-    const torch::Tensor dG_dSigma_opacity_totals,
-    const torch::Tensor H_G_sigma_opacity_totals,
-    // Projection derivatives
-    const torch::Tensor jacobians,
-    const torch::Tensor dSigma_dpx,
-    const torch::Tensor dSigma_dpy,
-    const torch::Tensor dSigma_dpz,
-    const torch::Tensor dc_sh_dp,
-    const torch::Tensor H_pi_px,
-    const torch::Tensor H_pi_py,
-    const torch::Tensor H_c_sh_p,
-    const torch::Tensor H_Sigma_pxx,
-    const torch::Tensor H_Sigma_pxy,
-    const torch::Tensor H_Sigma_pyy,
-    const torch::Tensor dSigma_dtheta_inputs,
-    const torch::Tensor d2Sigma_dtheta2_inputs,
-    const torch::Tensor T_matrices,
-    const torch::Tensor conics_2d,
-    const torch::Tensor p_k,
-    const torch::Tensor camera_pos
-) {
-    // Device and input checks
-    DEVICE_GUARD(dc_dcSH_totals);
-    CHECK_INPUT(dc_dcSH_totals);
-    CHECK_INPUT(dc_dG_totals);
-    CHECK_INPUT(dG_dmean2d_totals);
-    CHECK_INPUT(dG_dSigma_totals);
-    CHECK_INPUT(H_G_mean2d_totals);
-    CHECK_INPUT(H_G_sigma_totals);
-    CHECK_INPUT(H_G_mixed_totals);
-    CHECK_INPUT(dc_dG_opacity_totals);
-    CHECK_INPUT(dG_dSigma_opacity_totals);
-    CHECK_INPUT(H_G_sigma_opacity_totals);
-    CHECK_INPUT(jacobians);
-    CHECK_INPUT(dSigma_dpx);
-    CHECK_INPUT(dSigma_dpy);
-    CHECK_INPUT(dSigma_dpz);
-    CHECK_INPUT(dc_sh_dp);
-    CHECK_INPUT(H_pi_px);
-    CHECK_INPUT(H_pi_py);
-    CHECK_INPUT(H_c_sh_p);
-    CHECK_INPUT(H_Sigma_pxx);
-    CHECK_INPUT(H_Sigma_pxy);
-    CHECK_INPUT(H_Sigma_pyy);
-    CHECK_INPUT(dSigma_dtheta_inputs);
-    CHECK_INPUT(d2Sigma_dtheta2_inputs);
-    CHECK_INPUT(T_matrices);
-    CHECK_INPUT(conics_2d);
-    CHECK_INPUT(p_k);
-    CHECK_INPUT(camera_pos);
-
-    const int num_gaussians = dc_dcSH_totals.size(0);
-
-    // Create output tensors
-    auto options = torch::TensorOptions()
-        .dtype(torch::kFloat32)
-        .device(dc_dcSH_totals.device());
-
-    auto d_c_vk = torch::zeros({num_gaussians, 2}, options);
-    auto H_c_vk = torch::zeros({num_gaussians, 2, 2}, options);
-    auto dc_dlambda = torch::zeros({num_gaussians, 2}, options);
-    auto d2c_dlambda2 = torch::zeros({num_gaussians, 2, 2}, options);
-    auto dc_dtheta = torch::zeros({num_gaussians}, options);
-    auto d2c_dtheta2 = torch::zeros({num_gaussians}, options);
-    auto dc_dopacity = torch::zeros({num_gaussians}, options);
-    auto d2c_dopacity2 = torch::zeros({num_gaussians}, options);
-    //auto dc_dcolor = torch::zeros({num_gaussians, 3}, options);
-    //auto dc_dsigma = torch::zeros({num_gaussians}, options);
-
-    // Launch the kernel
-    launch_assemble_newton_derivatives_kernel(
-        num_gaussians,
-        dc_dcSH_totals,
-        dc_dG_totals,
-        dG_dmean2d_totals,
-        dG_dSigma_totals,
-        H_G_mean2d_totals,
-        H_G_sigma_totals,
-        H_G_mixed_totals,
-        dc_dG_opacity_totals,
-        dG_dSigma_opacity_totals,
-        H_G_sigma_opacity_totals,
-        dc_dopacity,
-        d2c_dopacity2,
-        jacobians,
-        dSigma_dpx,
-        dSigma_dpy,
-        dSigma_dpz,
-        dc_sh_dp,
-        H_pi_px,
-        H_pi_py,
-        H_c_sh_p,
-        H_Sigma_pxx,
-        H_Sigma_pxy,
-        H_Sigma_pyy,
-        dSigma_dtheta_inputs,
-        d2Sigma_dtheta2_inputs,
-        T_matrices,
-        conics_2d,
-        p_k,
-        camera_pos,
-        d_c_vk,
-        H_c_vk,
-        dc_dlambda,
-        d2c_dlambda2,
-        dc_dtheta,
-        d2c_dtheta2
-    );
-
-    return std::make_tuple(
-        d_c_vk, H_c_vk,
-        dc_dlambda, d2c_dlambda2,
-        dc_dtheta, d2c_dtheta2,
-        dc_dopacity, d2c_dopacity2
-    );
-}
-
-*/
 
 torch::Tensor compute_y_updates(
     const torch::Tensor grad_y,

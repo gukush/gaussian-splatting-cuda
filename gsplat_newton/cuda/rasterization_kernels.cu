@@ -49,14 +49,14 @@ __global__ void compute_intermediate_derivatives_kernel(
     //const scalar_t *__restrict__ v_render_alphas,
 
     // --- INTERMEDIATE OUTPUTS (per-Gaussian) ---
-    scalar_t *__restrict__ dc_dcSH,      // Σ(∂c/∂c̃ₖ) [N, 3]
+    scalar_t *__restrict__ dc_dcSH,      // Σ(∂c/∂c̃ₖ) [N, 3] - but value is the same for each channel.
     scalar_t *__restrict__ dc_dG,        // Σ(∂c/∂Gₖ) [N, 3]
     vec2 *__restrict__ dG_dmean2d,       // Σ(∂Gₖ/∂πₖ)
     vec3 *__restrict__ dG_dSigma,        // Σ(∂Gₖ/∂Σₖ)
     vec3 *__restrict__ H_G_mean2d,       // Σ(∂²Gₖ/∂πₖ²)
     scalar_t *__restrict__ H_G_sigma,    // Σ(∂²Gₖ/∂Σₖ²), shape [N, 6]
     scalar_t *__restrict__ H_G_mixed,    // Σ(∂²Gₖ/∂πₖ∂Σₖ), shape [N, 6]
-    scalar_t *__restrict__ dc_opac        // Σ(∂c/∂σₖ) hopefully... ???
+    scalar_t *__restrict__ dc_opac        // Σ(∂c/∂σₖ) hopefully... ??? [N,3]
 ) {
     // --- Boilerplate: Thread and memory indexing (from original kernel) ---
     auto block = cg::this_thread_block();

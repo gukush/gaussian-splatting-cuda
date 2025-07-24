@@ -234,8 +234,9 @@ compute_intermediate_derivatives_bwd(
 // 4. ASSEMBLY & UPDATE KERNELS
 // ========================================================================
 
-
-std::tuple<at::Tensor, at::Tensor, at::Tensor, at::Tensor, at::Tensor, at::Tensor>
+std::tuple<at::Tensor, at::Tensor, at::Tensor,
+    at::Tensor, at::Tensor, at::Tensor, at::Tensor,
+    at::Tensor, at::Tensor, at::Tensor>
 assemble_newton_derivatives_split(
     // Intermediate derivatives
     const at::Tensor dc_dcSH_totals,
@@ -257,94 +258,13 @@ assemble_newton_derivatives_split(
     const at::Tensor T_matrices,
     const at::Tensor conics_2d,
     const at::Tensor p_k,
-    const at::Tensor camera_pos
-);
-
-/**
- * @brief Assembles the final gradients (g) and Hessians (H) for each parameter
- * group by applying the chain rule to the aggregated intermediate derivatives.
- * This kernel runs one thread per Gaussian.
- * @param context The context struct containing all necessary input derivatives.
- * The final g and H for each parameter group will be stored back into the context.
- */
-
- /*
-std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor,
-           torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor>
-assemble_newton_derivatives(
-    // Input tensors from intermediate derivatives
-    const torch::Tensor dc_dcSH_totals,
-    const torch::Tensor dc_dG_totals,
-    const torch::Tensor dG_dmean2d_totals,
-    const torch::Tensor dG_dSigma_totals,
-    const torch::Tensor H_G_mean2d_totals,
-    const torch::Tensor H_G_sigma_totals,
-    const torch::Tensor H_G_mixed_totals,
-    const torch::Tensor dc_dG_opacity_totals,
-    const torch::Tensor dG_dSigma_opacity_totals,
-    const torch::Tensor H_G_sigma_opacity_totals,
-    // Projection derivatives
-    const torch::Tensor jacobians,
-    const torch::Tensor dSigma_dpx,
-    const torch::Tensor dSigma_dpy,
-    const torch::Tensor dSigma_dpz,
-    const torch::Tensor dc_sh_dp,
-    const torch::Tensor H_pi_px,
-    const torch::Tensor H_pi_py,
-    const torch::Tensor H_c_sh_p,
-    const torch::Tensor H_Sigma_pxx,
-    const torch::Tensor H_Sigma_pxy,
-    const torch::Tensor H_Sigma_pyy,
-    const torch::Tensor dSigma_dtheta_inputs,
-    const torch::Tensor d2Sigma_dtheta2_inputs,
-    const torch::Tensor T_matrices,
-    const torch::Tensor conics_2d,
-    const torch::Tensor p_k,
-    const torch::Tensor camera_pos
-);
-
-
-// launchers:
-
-void launch_assemble_newton_derivatives_kernel(
-    const int num_gaussians,
-    const at::Tensor dc_dcSH_totals,
-    const at::Tensor dc_dG_totals,
-    const at::Tensor dG_dmean2d_totals,
-    const at::Tensor dG_dSigma_totals,
-    const at::Tensor H_G_mean2d_totals,
-    const at::Tensor H_G_sigma_totals,
-    const at::Tensor H_G_mixed_totals,
-    const at::Tensor dc_dG_opacity_totals,
-    const at::Tensor dG_dSigma_opacity_totals,
-    const at::Tensor H_G_sigma_opacity_totals,
-    at::Tensor dc_dopacity,
-    at::Tensor d2c_dopacity2,
-    const at::Tensor jacobians,
-    const at::Tensor dSigma_dpx,
-    const at::Tensor dSigma_dpy,
-    const at::Tensor dSigma_dpz,
-    const at::Tensor dc_sh_dp,
-    const at::Tensor H_pi_px,
-    const at::Tensor H_pi_py,
-    const at::Tensor H_c_sh_p,
-    const at::Tensor H_Sigma_pxx,
-    const at::Tensor H_Sigma_pxy,
-    const at::Tensor H_Sigma_pyy,
-    const at::Tensor dSigma_dtheta_inputs,
-    const at::Tensor d2Sigma_dtheta2_inputs,
-    const at::Tensor T_matrices,
-    const at::Tensor conics_2d,
-    const at::Tensor p_k,
     const at::Tensor camera_pos,
-    at::Tensor d_c_vk,
-    at::Tensor H_c_vk,
-    at::Tensor dc_dlambda,
-    at::Tensor d2c_dlambda2,
-    at::Tensor dc_dtheta,
-    at::Tensor d2c_dtheta2
+    const at::Tensor dc_dopac,
+    const at::Tensor dcRAST_dck,
+    const at::Tensor dL_dc,
+    const at::Tensor H_L_dc
 );
-*/
+
 
 void launch_projection_ewa_3dgs_fused_fwd_kernel_LN(
     // inputs
@@ -401,6 +321,7 @@ void launch_chain_rule_color_position_kernel(
 );
 
 
+
 void launch_compute_position_derivatives_kernel(
     const int num_gaussians,
     const at::Tensor dc_dcSH_totals,
@@ -418,9 +339,11 @@ void launch_compute_position_derivatives_kernel(
     const at::Tensor H_Sigma_dp,
     const at::Tensor conics_2d,
     const at::Tensor p_k,
+    const at::Tensor dL_dc,
+    const at::Tensor H_L_dc,
     const at::Tensor camera_pos,
-    at::Tensor d_c_vk,
-    at::Tensor H_c_vk
+    at::Tensor d_L_vk,
+    at::Tensor H_L_vk
 );
 
 void launch_compute_scale_derivatives_kernel(
@@ -430,6 +353,8 @@ void launch_compute_scale_derivatives_kernel(
     const at::Tensor H_G_sigma_inv_totals,
     const at::Tensor T_matrices,
     const at::Tensor conics_2d,
+    const at::Tensor dL_dc,
+    const at::Tensor H_L_dc,
     at::Tensor dc_dlambda,
     at::Tensor d2c_dlambda2
 );
@@ -442,18 +367,30 @@ void launch_compute_rotation_derivatives_kernel(
     const at::Tensor dSigma_dtheta_inputs,
     const at::Tensor d2Sigma_dtheta2_inputs,
     const at::Tensor conics_2d,
-    at::Tensor dc_dtheta,
-    at::Tensor d2c_dtheta2
+    const at::Tensor dL_dc,
+    const at::Tensor H_L_dc,
+    at::Tensor dL_dtheta,
+    at::Tensor d2L_dtheta2
+);
+
+void launch_compute_opacity_derivatives_kernel(
+    const int num_gaussians,
+    const at::Tensor dc_dopac,
+    const at::Tensor dL_dc,
+    const at::Tensor H_L_dc,
+    at::Tensor dL_dopac,
+    at::Tensor H_L_dopac
 );
 
 void launch_compute_color_derivatives_kernel(
     const int num_gaussians,
-    const at::Tensor dc_dcSH_totals,
-    const at::Tensor dc_sh_dcolor,
-    at::Tensor dc_dcolor,
-    at::Tensor d2c_dcolor2
+    const int num_coeffs,
+    const at::Tensor dcRAST_dck,
+    const at::Tensor dL_dc,
+    const at::Tensor H_L_dc,
+    at::Tensor dL_dcolor,
+    at::Tensor H_L_dcolor
 );
-
 
 template <uint32_t CDIM>
 void launch_accumulate_y_2nd_order_kernel(
