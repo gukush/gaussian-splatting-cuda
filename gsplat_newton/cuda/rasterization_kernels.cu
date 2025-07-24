@@ -49,8 +49,8 @@ __global__ void compute_intermediate_derivatives_kernel(
     //const scalar_t *__restrict__ v_render_alphas,
 
     // --- INTERMEDIATE OUTPUTS (per-Gaussian) ---
-    scalar_t *__restrict__ dc_dcSH,      // Σ(∂c/∂c̃ₖ)
-    scalar_t *__restrict__ dc_dG,        // Σ(∂c/∂Gₖ)
+    scalar_t *__restrict__ dc_dcSH,      // Σ(∂c/∂c̃ₖ) [N, 3]
+    scalar_t *__restrict__ dc_dG,        // Σ(∂c/∂Gₖ) [N, 3]
     vec2 *__restrict__ dG_dmean2d,       // Σ(∂Gₖ/∂πₖ)
     vec3 *__restrict__ dG_dSigma,        // Σ(∂Gₖ/∂Σₖ)
     vec3 *__restrict__ H_G_mean2d,       // Σ(∂²Gₖ/∂πₖ²)

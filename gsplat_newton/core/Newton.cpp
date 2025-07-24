@@ -90,8 +90,12 @@ void local_newton_backward(
     auto& d_cSH_dp = std::get<0>(chained_outputs);
     auto& H_cSH_dp = std::get<1>(chained_outputs);
     // --- Stage 2: Assemble Local Newton Systems ---
+    // this one does formulas for position, scale and rotation
+    // opacity is calculated in bwd of rasterization
+    // color is calculated in spherical harmonics LN (dcRAST_dck)
+    //
     // Combines projection derivatives (from context) and rasterization derivatives (from above).
-    auto newton_systems = gsplat_newton::assemble_newton_derivatives(
+    auto newton_systems = assemble_newton_derivatives_split(
         // Inputs from intermediate derivatives
         dc_dcSH_totals,
         dc_dG_totals,
@@ -100,21 +104,13 @@ void local_newton_backward(
         H_G_mean2d_totals,
         H_G_sigma_totals,
         H_G_mixed_totals,
-        dc_dG_totals, // Using dc_dG for opacity part as placeholder
-        dG_dSigma_totals, // Using dG_dSigma for opacity part as placeholder
-        H_G_sigma_totals, // Using H_G_sigma for opacity part as placeholder
         // Projection derivatives from context
         context.d_mean2d_dp, // jacobians
-        context.d_Sigma_dp.select(2, 0), // dSigma_dpx
-        context.d_Sigma_dp.select(2, 1), // dSigma_dpy
-        context.d_Sigma_dp.select(2, 2), // dSigma_dpz
+        context.d_Sigma_dp, // ∂Σ/∂p  [N,3,3]
         d_cSH_dp, // dc_sh_dp
-        context.H_mean2d_dp.select(2, 0), // H_pi_px
-        context.H_mean2d_dp.select(2, 1), // H_pi_py
+        context.H_mean2d_dp, // ∂²π/∂p² [N,2,3]
         H_cSH_dp, // H_c_sh_p
-        context.H_Sigma_dp.select(2, 0), // H_Sigma_pxx
-        context.H_Sigma_dp.select(2, 1), // H_Sigma_pxy
-        context.H_Sigma_dp.select(2, 2), // H_Sigma_pyy
+        context.H_Sigma_dp, // ∂²Σ/∂p² [N,3,3]
         context.d_Sigma_dtheta,
         context.H_Sigma_dtheta,
         context.T_matrices,
@@ -129,15 +125,18 @@ void local_newton_backward(
     context.H_L_scale     = std::get<3>(newton_systems);
     context.dL_d_rot      = std::get<4>(newton_systems);
     context.H_L_rot       = std::get<5>(newton_systems);
-    context.dL_d_opacity  = std::get<6>(newton_systems);
-    context.H_L_opacity   = std::get<7>(newton_systems);
-    // Note: assemble_newton_derivatives returns 8 tensors, color is not separate.
+    // context.dL_d_opacity  = std::get<6>(newton_systems);
+    // context.H_L_opacity   = std::get<7>(newton_systems);
     // We will need to compute color derivatives separately or assume they are part of another tensor.
     // For now, creating placeholder tensors for color update.
     //context.dL_d_color = torch::zeros({means.size(0), 3}, means.options());
     //context.H_L_color = torch::zeros({means.size(0), 3, 3}, means.options());
 
 }
+
+
+
+
 
 void solve_and_update(
     const LocalNewtonContext& context,
@@ -171,6 +170,20 @@ void solve_and_update(
     const auto d_mean2d_dp = context.d_mean2d_dp;
     const auto T_matrices = context.T_matrices;
     const auto view_dirs = context.view_dirs;
+    CHECK_INPUT(dL_d_pos);
+    CHECK_INPUT(H_L_pos);
+    CHECK_INPUT(dL_d_scale);
+    CHECK_INPUT(H_L_scale);
+    CHECK_INPUT(dL_d_rot);
+    CHECK_INPUT(H_L_rot);
+    CHECK_INPUT(dL_d_opacity);
+    CHECK_INPUT(H_L_opacity);
+    CHECK_INPUT(dL_d_color);
+    CHECK_INPUT(H_L_color);
+    CHECK_INPUT(d_mean2d_dp);
+    CHECK_INPUT(T_matrices);
+    CHECK_INPUT(view_dirs);
+
     launch_solve_and_update_all_attributes_kernel(
         dL_d_pos, H_L_pos,
         dL_d_scale, H_L_scale,

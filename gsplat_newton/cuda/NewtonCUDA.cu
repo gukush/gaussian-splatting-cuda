@@ -52,9 +52,9 @@ __global__ void solve_updates_and_backproject_kernel_impl(
     delta_p.x = U_k_T[0][0] * delta_vk.x + U_k_T[0][1] * delta_vk.y;
     delta_p.y = U_k_T[1][0] * delta_vk.x + U_k_T[1][1] * delta_vk.y;
     delta_p.z = U_k_T[2][0] * delta_vk.x + U_k_T[2][1] * delta_vk.y;
-    atomicAdd(&means[gid * 3 + 0], delta_p.x);
-    atomicAdd(&means[gid * 3 + 1], delta_p.y);
-    atomicAdd(&means[gid * 3 + 2], delta_p.z);
+    means[gid * 3 + 0] = delta_p.x;
+    means[gid * 3 + 1] = delta_p.y;
+    means[gid * 3 + 2] = delta_p.z;
 
     // --- Scaling Update ---
     mat2 H_scale = glm::make_mat2(H_L_scale + gid * 4);
@@ -74,9 +74,9 @@ __global__ void solve_updates_and_backproject_kernel_impl(
     delta_s.y = T_k_T_T_k_inv[1][0] * temp_vec.x + T_k_T_T_k_inv[1][1] * temp_vec.y + T_k_T_T_k_inv[1][2] * temp_vec.z;
     delta_s.z = T_k_T_T_k_inv[2][0] * temp_vec.x + T_k_T_T_k_inv[2][1] * temp_vec.y + T_k_T_T_k_inv[2][2] * temp_vec.z;
     //vec3 delta_s = T_k_T_T_k_inv * T_k_T * delta_lambda;
-    atomicAdd(&scales[gid * 3 + 0], delta_s.x);
-    atomicAdd(&scales[gid * 3 + 1], delta_s.y);
-    atomicAdd(&scales[gid * 3 + 2], delta_s.z);
+    scales[gid * 3 + 0] += delta_s.x;
+    scales[gid * 3 + 1] += delta_s.y;
+    scales[gid * 3 + 2] += delta_s.z;
 
     // --- Rotation Update ---
     float H_rot = H_L_rot[gid];
@@ -114,9 +114,9 @@ __global__ void solve_updates_and_backproject_kernel_impl(
     vec3 delta_color = -glm::inverse(H_color + mat3(1e-6f)) * grad_color;
     // Update the DC component (first coefficient) of the SH coefficients
     // sh_coeffs is shaped [N, K, 3], so the element is at [gid, 0, channel]
-    atomicAdd(&sh_coeffs[gid * K * 3 + 0], delta_color.x); // FIX 3: Use K instead of hardcoded 16
-    atomicAdd(&sh_coeffs[gid * K * 3 + 1], delta_color.y);
-    atomicAdd(&sh_coeffs[gid * K * 3 + 2], delta_color.z);
+    sh_coeffs[gid * K * 3 + 0] = delta_color.x; // FIX 3: Use K instead of hardcoded 16
+    sh_coeffs[gid * K * 3 + 1] = delta_color.y;
+    sh_coeffs[gid * K * 3 + 2] = delta_color.z;
 }
 
 void launch_solve_and_update_all_attributes_kernel(

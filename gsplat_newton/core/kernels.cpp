@@ -389,6 +389,102 @@ compute_intermediate_derivatives_bwd(
 // ===================================================================================================
 
 
+// Wrapper function to call all split kernels
+std::tuple<at::Tensor, at::Tensor, at::Tensor, at::Tensor, at::Tensor, at::Tensor>
+assemble_newton_derivatives_split(
+    // Intermediate derivatives
+    const at::Tensor dc_dcSH_totals,
+    const at::Tensor dc_dG_totals,
+    const at::Tensor dG_dmean2d_totals,
+    const at::Tensor dG_dSigma_totals,
+    const at::Tensor H_G_mean2d_totals,
+    const at::Tensor H_G_sigma_totals,
+    const at::Tensor H_G_mixed_totals,
+    // Projection derivatives
+    const at::Tensor jacobians,
+    const at::Tensor dSigma_dp,
+    const at::Tensor dc_sh_dp,
+    const at::Tensor H_mean2d_dp,
+    const at::Tensor H_c_sh_p,
+    const at::Tensor H_Sigma_dp,
+    const at::Tensor dSigma_dtheta_inputs,
+    const at::Tensor d2Sigma_dtheta2_inputs,
+    const at::Tensor T_matrices,
+    const at::Tensor conics_2d,
+    const at::Tensor p_k,
+    const at::Tensor camera_pos
+) {
+    const int num_gaussians = p_k.size(0);
+    auto options = p_k.options();
+
+    // Allocate output tensors
+    auto d_c_vk = torch::empty({num_gaussians, 2}, options);
+    auto H_c_vk = torch::empty({num_gaussians, 2, 2}, options);
+    auto dc_dlambda = torch::empty({num_gaussians, 2}, options);
+    auto d2c_dlambda2 = torch::empty({num_gaussians, 2, 2}, options);
+    auto dc_dtheta = torch::empty({num_gaussians}, options);
+    auto d2c_dtheta2 = torch::empty({num_gaussians}, options);
+
+    // Launch split kernels
+        launch_compute_position_derivatives_kernel(
+            num_gaussians,
+            dc_dcSH_totals,
+            dc_dG_totals,
+            dG_dmean2d_totals,
+            dG_dSigma_totals,
+            H_G_mean2d_totals,
+            H_G_sigma_totals,
+            H_G_mixed_totals,
+            jacobians,
+            dSigma_dp,
+            dc_sh_dp,
+            H_mean2d_dp,
+            H_c_sh_p,
+            H_Sigma_dp,
+            conics_2d,
+            p_k,
+            camera_pos,
+            d_c_vk,
+            H_c_vk
+        );
+
+        launch_compute_scale_derivatives_kernel(
+            num_gaussians,
+            dc_dG_totals,
+            dG_dSigma_totals,
+            H_G_sigma_totals,
+            T_matrices,
+            conics_2d,
+            dc_dlambda,
+            d2c_dlambda2
+        );
+
+        launch_compute_rotation_derivatives_kernel(
+            num_gaussians,
+            dc_dG_totals,
+            dG_dSigma_totals,
+            H_G_sigma_totals,
+            dSigma_dtheta_inputs,
+            d2Sigma_dtheta2_inputs,
+            conics_2d,
+            dc_dtheta,
+            d2c_dtheta2
+        );
+        /*
+        launch_compute_color_derivatives_kernel(
+            num_gaussians,
+            dc_dcSH_totals,
+            dc_sh_dcolor,
+            dc_dcolor,
+            d2c_dcolor2
+        );
+        */
+
+    return std::make_tuple(d_c_vk, H_c_vk, dc_dlambda, d2c_dlambda2,
+                          dc_dtheta, d2c_dtheta2);
+}
+
+/*
 std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor,
            torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor>
 assemble_newton_derivatives(
@@ -518,7 +614,7 @@ assemble_newton_derivatives(
     );
 }
 
-
+*/
 
 torch::Tensor compute_y_updates(
     const torch::Tensor grad_y,

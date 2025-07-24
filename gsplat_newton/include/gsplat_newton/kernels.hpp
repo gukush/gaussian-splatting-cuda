@@ -234,6 +234,32 @@ compute_intermediate_derivatives_bwd(
 // 4. ASSEMBLY & UPDATE KERNELS
 // ========================================================================
 
+
+std::tuple<at::Tensor, at::Tensor, at::Tensor, at::Tensor, at::Tensor, at::Tensor>
+assemble_newton_derivatives_split(
+    // Intermediate derivatives
+    const at::Tensor dc_dcSH_totals,
+    const at::Tensor dc_dG_totals,
+    const at::Tensor dG_dmean2d_totals,
+    const at::Tensor dG_dSigma_totals,
+    const at::Tensor H_G_mean2d_totals,
+    const at::Tensor H_G_sigma_totals,
+    const at::Tensor H_G_mixed_totals,
+    // Projection derivatives
+    const at::Tensor jacobians,
+    const at::Tensor dSigma_dp,
+    const at::Tensor dc_sh_dp,
+    const at::Tensor H_mean2d_dp,
+    const at::Tensor H_c_sh_p,
+    const at::Tensor H_Sigma_dp,
+    const at::Tensor dSigma_dtheta_inputs,
+    const at::Tensor d2Sigma_dtheta2_inputs,
+    const at::Tensor T_matrices,
+    const at::Tensor conics_2d,
+    const at::Tensor p_k,
+    const at::Tensor camera_pos
+);
+
 /**
  * @brief Assembles the final gradients (g) and Hessians (H) for each parameter
  * group by applying the chain rule to the aggregated intermediate derivatives.
@@ -242,6 +268,7 @@ compute_intermediate_derivatives_bwd(
  * The final g and H for each parameter group will be stored back into the context.
  */
 
+ /*
 std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor,
            torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor>
 assemble_newton_derivatives(
@@ -275,42 +302,6 @@ assemble_newton_derivatives(
     const torch::Tensor p_k,
     const torch::Tensor camera_pos
 );
-
-
-/**
- * @brief Solves the local Newton system and updates the 3D positions of the Gaussians.
- * @param context The context struct containing the final position gradients and Hessians.
- * The underlying SplatData within the context will be updated.
- */
-//void update_position(LocalNewtonContext& context, SplatData& model);
-
-/**
- * @brief Solves the local Newton system and updates the scaling parameters.
- * @param context The context struct containing the final scaling gradients and Hessians.
- * The underlying SplatData will be updated.
- */
-//void update_scaling(LocalNewtonContext& context, SplatData& model);
-
-/**
- * @brief Solves the local Newton system and updates the rotation quaternions.
- * @param context The context struct containing the final rotation gradients and Hessians.
- * The underlying SplatData will be updated.
- */
-//void update_rotation(LocalNewtonContext& context, SplatData& model);
-
-/**
- * @brief Solves the local Newton system (with log barrier) and updates the opacities.
- * @param context The context struct containing the final opacity gradients and Hessians.
- * The underlying SplatData will be updated.
- */
-//void update_opacity(LocalNewtonContext& context, SplatData& model);
-
-/**
- * @brief Solves the local Newton system and updates the SH color coefficients.
- * @param context The context struct containing the final color gradients and Hessians.
- * The underlying SplatData will be updated.
- */
-//void update_color(LocalNewtonContext& context, SplatData& model);
 
 
 // launchers:
@@ -353,7 +344,7 @@ void launch_assemble_newton_derivatives_kernel(
     at::Tensor dc_dtheta,
     at::Tensor d2c_dtheta2
 );
-
+*/
 
 void launch_projection_ewa_3dgs_fused_fwd_kernel_LN(
     // inputs
@@ -407,6 +398,60 @@ void launch_chain_rule_color_position_kernel(
     const at::Tensor color_dir_hess,  // [...,6]
     at::Tensor       color_pos_grad,  // [...,3]
     at::Tensor       color_pos_hess   // [...,6]
+);
+
+
+void launch_compute_position_derivatives_kernel(
+    const int num_gaussians,
+    const at::Tensor dc_dcSH_totals,
+    const at::Tensor dc_dG_totals,
+    const at::Tensor dG_dmean2d_totals,
+    const at::Tensor dG_dSigma_inv_totals,
+    const at::Tensor H_G_mean2d_totals,
+    const at::Tensor H_G_sigma_inv_totals,
+    const at::Tensor H_G_mixed_inv_totals,
+    const at::Tensor jacobians,
+    const at::Tensor dSigma_dp,
+    const at::Tensor dc_sh_dp,
+    const at::Tensor H_mean2d_dp,
+    const at::Tensor H_c_sh_p,
+    const at::Tensor H_Sigma_dp,
+    const at::Tensor conics_2d,
+    const at::Tensor p_k,
+    const at::Tensor camera_pos,
+    at::Tensor d_c_vk,
+    at::Tensor H_c_vk
+);
+
+void launch_compute_scale_derivatives_kernel(
+    const int num_gaussians,
+    const at::Tensor dc_dG_totals,
+    const at::Tensor dG_dSigma_inv_totals,
+    const at::Tensor H_G_sigma_inv_totals,
+    const at::Tensor T_matrices,
+    const at::Tensor conics_2d,
+    at::Tensor dc_dlambda,
+    at::Tensor d2c_dlambda2
+);
+
+void launch_compute_rotation_derivatives_kernel(
+    const int num_gaussians,
+    const at::Tensor dc_dG_totals,
+    const at::Tensor dG_dSigma_inv_totals,
+    const at::Tensor H_G_sigma_inv_totals,
+    const at::Tensor dSigma_dtheta_inputs,
+    const at::Tensor d2Sigma_dtheta2_inputs,
+    const at::Tensor conics_2d,
+    at::Tensor dc_dtheta,
+    at::Tensor d2c_dtheta2
+);
+
+void launch_compute_color_derivatives_kernel(
+    const int num_gaussians,
+    const at::Tensor dc_dcSH_totals,
+    const at::Tensor dc_sh_dcolor,
+    at::Tensor dc_dcolor,
+    at::Tensor d2c_dcolor2
 );
 
 
