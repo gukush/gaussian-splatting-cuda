@@ -14,9 +14,9 @@ namespace gsplat_newton {
 
 template <typename scalar_t>
 __device__ void chain_rule_color_position_kernel(
-    const glm::vec3 &p_k,                 // Input position
-    const glm::vec3 &camera_center,       // Camera center
-    const glm::vec3 &color_dir_grad,      // ∂c/∂r (gradient in direction space)
+    const glm::vec3& p_k,                 // Input position
+    const glm::vec3& camera_center,       // Camera center
+    const glm::vec3& color_dir_grad,      // ∂c/∂r (gradient in direction space)
     const scalar_t *color_dir_hess,       // ∂²c/∂r² (Hessian in direction space, packed as [xx, yy, zz, xy, xz, yz])
     // Outputs
     glm::vec3 *color_pos_grad,           // ∂c/∂p (gradient in position space)
@@ -107,7 +107,7 @@ template <typename scalar_t>
 __global__ void chain_rule_color_position_global_kernel(
     const uint32_t       N,
     const glm::vec3     *p_k,               // [N,3]
-    const glm::vec3      camera_center,     // broadcast
+    const glm::vec3     *camera_center,     // broadcast
     const glm::vec3     *color_dir_grad,    // [N,3]
     const scalar_t      *color_dir_hess,    // [N,6]
     glm::vec3           *color_pos_grad,    // [N,3] output
@@ -119,7 +119,7 @@ __global__ void chain_rule_color_position_global_kernel(
     // call your device function per‐sample
     chain_rule_color_position_kernel<scalar_t>(
         p_k[idx],
-        camera_center,
+        camera_center[0],
         color_dir_grad[idx],
         color_dir_hess + idx * 6,
         &color_pos_grad[idx],
@@ -152,15 +152,15 @@ void launch_chain_rule_color_position_kernel(
     AT_DISPATCH_FLOATING_TYPES(p_k.scalar_type(),
         "chain_rule_color_position_global_kernel", [&] {
         // load camera_center once
-        glm::vec3 cc = *reinterpret_cast<const glm::vec3*>(
-            camera_center.data_ptr<scalar_t>()
-        );
+        //glm::vec3 cc = *reinterpret_cast<const glm::vec3*>(
+        //    camera_center.data_ptr<scalar_t>()
+        //);
         chain_rule_color_position_global_kernel<scalar_t><<<
             blocks, threads, 0, at::cuda::getCurrentCUDAStream()
         >>>(
             N,
             reinterpret_cast<const glm::vec3*>(p_k.data_ptr<scalar_t>()),
-            cc,
+            reinterpret_cast<const glm::vec3*>(camera_center.data_ptr<scalar_t>()),
             reinterpret_cast<const glm::vec3*>(color_dir_grad.data_ptr<scalar_t>()),
             color_dir_hess.data_ptr<scalar_t>(),
             reinterpret_cast<glm::vec3*>(color_pos_grad.data_ptr<scalar_t>()),

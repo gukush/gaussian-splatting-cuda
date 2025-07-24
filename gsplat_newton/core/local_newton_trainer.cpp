@@ -170,6 +170,9 @@ namespace gs {
         }
             */
         // --- End of example ---
+        if (iter % 100 == 0) {
+            std::cout << "running rasterization for newton";
+        }
         auto render_fn = [this, &cam, render_mode, gt_image, &ctx]() {
                 return gs::rasterize_newton_step(
                     *cam,
@@ -199,6 +202,9 @@ namespace gs {
 
         // Compute loss using the Newton-specific function
         torch::Tensor loss, dL_c, H_L_c;
+        if (iter % 100 == 0) {
+            std::cout << "computing loss gradients";
+        }
         std::tie(loss, dL_c, H_L_c) = compute_loss_grads(r_output,
                                                          gt_image,
                                                          strategy_->get_model(),
@@ -208,13 +214,18 @@ namespace gs {
         ctx.dL_d_color_img = dL_c;
         ctx.H_L_color_img = H_L_c;
         // Use local Newton instead of loss.backward()
+        if (iter % 100 == 0) {
+            std::cout << "performing local newton backward passs";
+        }
         gsplat_newton::local_newton_backward(
             ctx,
             strategy_->get_model(),
             static_cast<int>(cam->image_width()),
             static_cast<int>(cam->image_height())
         );
-
+        if (iter % 100 == 0) {
+            std::cout << "getting neighbors from knn";
+        }
         // Here we would need to do the overshoot prevention.
         // but it requires 2 smaller images to be completely iterated in the same manner.
         auto neighbors = camera_knn_->find_neighbors(cam->uid(), 3);
@@ -270,6 +281,9 @@ namespace gs {
         }
 
         // --- Stage 3: Solve Systems, Backproject, and Apply Updates ---
+        if (iter % 100 == 0) {
+            std::cout << "running solve for updates";
+        }
         gsplat_newton::solve_and_update(
             ctx,
             strategy_->get_model(),

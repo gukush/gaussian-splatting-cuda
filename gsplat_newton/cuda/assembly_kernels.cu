@@ -72,6 +72,45 @@ __device__ __forceinline__ void chain_attribute(
     H_L_yk[1][1] = S2 * dC_dyk.y * dC_dyk.y + S1 * d2C_dyk2[1][1];
 }
 
+
+/**
+ * @brief Corrected position gradient computation with RGB channel handling
+ */
+__device__ __forceinline__ vec3 compute_dc_dpk_local_rgb(
+    const float dc_dc_sh,
+    const float dc_dG,
+    const vec2& dG_dmean2d,
+    const vec3& dG_dSigma,
+    const mat3& dc_sh_dp,     // 3x3 matrix: channels x position components
+    const mat2x3& J,
+    const mat2 dSigma_dpx, const mat2 dSigma_dpy, const mat2 dSigma_dpz
+) {
+    vec3 grad = {0.f, 0.f, 0.f};
+
+    // Term 1: Spherical harmonics contribution - corrected for RGB channels
+    // dc_sh_dp[i][j] = ∂(color_channel_i)/∂(position_component_j)
+    // We need to sum over color channels for each position component
+    grad.x += dc_dc_sh * (dc_sh_dp[0][0] + dc_sh_dp[1][0] + dc_sh_dp[2][0]); // Sum RGB for px
+    grad.y += dc_dc_sh * (dc_sh_dp[0][1] + dc_sh_dp[1][1] + dc_sh_dp[2][1]); // Sum RGB for py
+    grad.z += dc_dc_sh * (dc_sh_dp[0][2] + dc_sh_dp[1][2] + dc_sh_dp[2][2]); // Sum RGB for pz
+
+    // Term 2: Gaussian weight contribution (unchanged)
+    if (fabsf(dc_dG) > 1e-7f) {
+        grad.x += dc_dG * (dG_dmean2d.x * J[0][0] + dG_dmean2d.y * J[0][1]);
+        grad.y += dc_dG * (dG_dmean2d.x * J[1][0] + dG_dmean2d.y * J[1][1]);
+        grad.z += dc_dG * (dG_dmean2d.x * J[2][0] + dG_dmean2d.y * J[2][1]);
+
+        float dG_S_dp_x = dG_dSigma.x * dSigma_dpx[0][0] + 2.0f * dG_dSigma.z * dSigma_dpx[1][0] + dG_dSigma.y * dSigma_dpx[1][1];
+        float dG_S_dp_y = dG_dSigma.x * dSigma_dpy[0][0] + 2.0f * dG_dSigma.z * dSigma_dpy[1][0] + dG_dSigma.y * dSigma_dpy[1][1];
+        float dG_S_dp_z = dG_dSigma.x * dSigma_dpz[0][0] + 2.0f * dG_dSigma.z * dSigma_dpz[1][0] + dG_dSigma.y * dSigma_dpz[1][1];
+
+        grad.x += dc_dG * dG_S_dp_x;
+        grad.y += dc_dG * dG_S_dp_y;
+        grad.z += dc_dG * dG_S_dp_z;
+    }
+    return grad;
+}
+
 // HELPERS Sigma_inv to Sigma for derivatives conversion
 
 /**
@@ -849,11 +888,11 @@ __global__ void compute_scale_derivatives_kernel(
                 T_k[i].z * (hessian_s[2][0] * T_k[j].x + hessian_s[2][1] * T_k[j].y + hessian_s[2][2] * T_k[j].z);
         }
     }
-    mat2 H_lambda = M_inv * (H_temp * M_inv);
+    mat2 H_c_lambda = M_inv * (H_temp * M_inv);
 
     vec2 dL_dlambda;
     mat2 H_lambda;
-    chain_attribute(dL_dc[g_idx],d2L_dc[g_idx],grad_lambda,H_lambda,dL_dlambda,H_lambda);
+    chain_attribute(dL_dc[g_idx],d2L_dc[g_idx],grad_lambda,H_c_lambda,dL_dlambda,H_lambda);
     dL_lambda[g_idx] = dL_dlambda;
     H_L_dlambda[g_idx] = H_lambda;
 }
@@ -994,43 +1033,7 @@ __global__ void compute_color_derivatives_kernel(
     }
 }
 
-/**
- * @brief Corrected position gradient computation with RGB channel handling
- */
-__device__ __forceinline__ vec3 compute_dc_dpk_local_rgb(
-    const float dc_dc_sh,
-    const float dc_dG,
-    const vec2& dG_dmean2d,
-    const vec3& dG_dSigma,
-    const mat3& dc_sh_dp,     // 3x3 matrix: channels x position components
-    const mat2x3& J,
-    const mat2 dSigma_dpx, const mat2 dSigma_dpy, const mat2 dSigma_dpz
-) {
-    vec3 grad = {0.f, 0.f, 0.f};
 
-    // Term 1: Spherical harmonics contribution - corrected for RGB channels
-    // dc_sh_dp[i][j] = ∂(color_channel_i)/∂(position_component_j)
-    // We need to sum over color channels for each position component
-    grad.x += dc_dc_sh * (dc_sh_dp[0][0] + dc_sh_dp[1][0] + dc_sh_dp[2][0]); // Sum RGB for px
-    grad.y += dc_dc_sh * (dc_sh_dp[0][1] + dc_sh_dp[1][1] + dc_sh_dp[2][1]); // Sum RGB for py
-    grad.z += dc_dc_sh * (dc_sh_dp[0][2] + dc_sh_dp[1][2] + dc_sh_dp[2][2]); // Sum RGB for pz
-
-    // Term 2: Gaussian weight contribution (unchanged)
-    if (fabsf(dc_dG) > 1e-7f) {
-        grad.x += dc_dG * (dG_dmean2d.x * J[0][0] + dG_dmean2d.y * J[0][1]);
-        grad.y += dc_dG * (dG_dmean2d.x * J[1][0] + dG_dmean2d.y * J[1][1]);
-        grad.z += dc_dG * (dG_dmean2d.x * J[2][0] + dG_dmean2d.y * J[2][1]);
-
-        float dG_S_dp_x = dG_dSigma.x * dSigma_dpx[0][0] + 2.0f * dG_dSigma.z * dSigma_dpx[1][0] + dG_dSigma.y * dSigma_dpx[1][1];
-        float dG_S_dp_y = dG_dSigma.x * dSigma_dpy[0][0] + 2.0f * dG_dSigma.z * dSigma_dpy[1][0] + dG_dSigma.y * dSigma_dpy[1][1];
-        float dG_S_dp_z = dG_dSigma.x * dSigma_dpz[0][0] + 2.0f * dG_dSigma.z * dSigma_dpz[1][0] + dG_dSigma.y * dSigma_dpz[1][1];
-
-        grad.x += dc_dG * dG_S_dp_x;
-        grad.y += dc_dG * dG_S_dp_y;
-        grad.z += dc_dG * dG_S_dp_z;
-    }
-    return grad;
-}
 void launch_compute_position_derivatives_kernel(
     const int num_gaussians,
     const at::Tensor dc_dcSH_totals,
