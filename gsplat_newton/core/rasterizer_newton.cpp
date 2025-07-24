@@ -229,7 +229,7 @@ if (!viewmat.defined()) {
     // First, compute camera position from inverse viewmat
     auto viewmat_inv = torch::inverse(viewmat);
     auto campos = viewmat_inv.index({Slice(), Slice(None, 3), 3}); // [C, 3]
-
+    context->campos = campos;
     // Compute directions from camera to each Gaussian
     auto dirs = means3D.unsqueeze(0) - campos.unsqueeze(1); // [C, N, 3]
 

@@ -56,6 +56,7 @@ struct LocalNewtonContext {
     torch::Tensor colors; // output of spherical_harmonics_fwd
     int sh_degree;
     int num_bases;
+    torch::Tensor campos;
     // ==================================
     // ROTATION & SCALING DERIVATIVES
     // ==================================

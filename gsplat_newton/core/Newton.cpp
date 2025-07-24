@@ -57,8 +57,6 @@ void local_newton_backward(
         flatten_ids,
         render_alphas,
         last_ids,
-        dL_d_color_img,
-        at::Tensor(), //TODO: add optional support with at::nullopt. v_render_alphas (assuming not needed or combined in dL_d_color_img)
         means.size(0)
     );
 
@@ -69,7 +67,7 @@ void local_newton_backward(
     auto& H_G_mean2d_totals = std::get<4>(intermediate_derivs);
     auto& H_G_sigma_totals = std::get<5>(intermediate_derivs);
     auto& H_G_mixed_totals = std::get<6>(intermediate_derivs);
-    auto& v_opac = std::get<7>(intermediate_derivs);
+    auto& d_opac = std::get<7>(intermediate_derivs);
 
     // --- Stage 2: "Backward pass" for Spherical Harmonics
     //
@@ -85,7 +83,7 @@ void local_newton_backward(
 
     auto chained_outputs = chain_rule_color_position(
         means,
-        viewmat.slice(0,0,1).inverse().slice(1,3,4).squeeze(), //camera_pos ??????
+        context.campos, //camera_pos ??????
         dcRAST_dr,
         H_cRAST_r
     );
@@ -122,7 +120,7 @@ void local_newton_backward(
         context.T_matrices,
         context.conics,
         means, // p_k
-        viewmat.slice(0,0,1).inverse().slice(1,3,4).squeeze() // camera_pos
+        context.campos // camera_pos
     );
 
     context.dL_d_pos      = std::get<0>(newton_systems);
@@ -136,8 +134,8 @@ void local_newton_backward(
     // Note: assemble_newton_derivatives returns 8 tensors, color is not separate.
     // We will need to compute color derivatives separately or assume they are part of another tensor.
     // For now, creating placeholder tensors for color update.
-    context.dL_d_color = torch::zeros({means.size(0), 3}, means.options());
-    context.H_L_color = torch::zeros({means.size(0), 3, 3}, means.options());
+    //context.dL_d_color = torch::zeros({means.size(0), 3}, means.options());
+    //context.H_L_color = torch::zeros({means.size(0), 3, 3}, means.options());
 
 }
 

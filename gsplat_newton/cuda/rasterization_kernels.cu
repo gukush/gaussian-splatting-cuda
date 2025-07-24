@@ -207,7 +207,7 @@ __global__ void compute_intermediate_derivatives_kernel(
                 float Dk [CDIM];
                 #pragma unroll
                 for (uint32_t k=0;k<CDIM;++k)
-                    Dk[k] = buffer[k] * ra / T_before;   // safe (T>0)
+                    Dk[k] = buffer[k] / T_before;   // safe (T>0)
 
                 /* colour difference  (ĉ_k - D_k)  */
                 float color_term[CDIM];
@@ -237,7 +237,7 @@ __global__ void compute_intermediate_derivatives_kernel(
                 dc_dcSH_local = alpha * T_before;
                 #pragma unroll
                 for (uint32_t k=0;k<CDIM;++k){
-                    dc_dG_local  [k] = sigma_k * T_before * color_term[k]; // eq.(2)
+                    dc_dG_local  [k] = opac * T_before * color_term[k]; // eq.(2)
                     dc_opac_local[k] = GkT            * color_term[k];      // eq.(2)
                 }
                 /*
@@ -298,11 +298,9 @@ __global__ void compute_intermediate_derivatives_kernel(
 
             // --- Aggregate contributions within warp using warpSum ---
             warpSum(dc_dcSH_local, warp);
-            warpSum(dc_dG_local, warp);
             warpSum(dG_dmean2d_local, warp);
             warpSum(dG_dSigma_local, warp);
             warpSum(H_G_mean2d_local, warp);
-            warpSum(dc_opac_local, warp);
             #pragma unroll
             for (int k = 0; k < 6; ++k) {
                 warpSum(H_G_sigma_local[k], warp);
