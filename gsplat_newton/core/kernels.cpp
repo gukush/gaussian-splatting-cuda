@@ -289,8 +289,8 @@ compute_intermediate_derivatives_bwd(
     const at::Tensor render_alphas,
     const at::Tensor last_ids,
     // gradients of outputs
-    const at::Tensor v_render_colors,
-    const at::optional<at::Tensor> v_render_alphas,
+    //const at::Tensor v_render_colors,
+    //const at::Tensor v_render_alphas,
     // output shapes
     const int64_t N
 ) {
@@ -303,10 +303,8 @@ compute_intermediate_derivatives_bwd(
     CHECK_INPUT(flatten_ids);
     CHECK_INPUT(render_alphas);
     CHECK_INPUT(last_ids);
-    CHECK_INPUT(v_render_colors);
-    if (v_render_alphas.has_value()) {
-        CHECK_INPUT(v_render_alphas.value());
-    }
+    //CHECK_INPUT(v_render_colors);
+    //CHECK_INPUT(v_render_alphas);
     if (backgrounds.has_value()) {
         CHECK_INPUT(backgrounds.value());
     }
@@ -344,8 +342,6 @@ compute_intermediate_derivatives_bwd(
             flatten_ids, \
             render_alphas, \
             last_ids, \
-            v_render_colors, \
-            v_render_alphas, \
             dc_dcSH, \
             dc_dG, \
             dG_dmean2d, \

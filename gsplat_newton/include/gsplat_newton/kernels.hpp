@@ -223,8 +223,8 @@ compute_intermediate_derivatives_bwd(
     const at::Tensor render_alphas,
     const at::Tensor last_ids,
     // gradients of outputs
-    const at::Tensor v_render_colors,
-    const at::optional<at::Tensor> v_render_alphas,
+    //const at::Tensor v_render_colors,
+    //const at::Tensor v_render_alphas,
     // output shapes
     const int64_t N
 );
@@ -492,8 +492,6 @@ template<uint32_t CDIM> void launch_compute_intermediate_derivatives_kernel(    
         const at::Tensor flatten_ids,                                                     \
         const at::Tensor render_alphas,                                                   \
         const at::Tensor last_ids,                                                        \
-        const at::Tensor v_render_colors,                                                 \
-        const at::optional<at::Tensor> v_render_alphas,                                                 \
         at::Tensor dc_dcSH,                                                               \
         at::Tensor dc_dG,                                                                 \
         at::Tensor dG_dmean2d,                                                            \
