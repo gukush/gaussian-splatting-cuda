@@ -221,7 +221,7 @@ if (!viewmat.defined()) {
     }
 
     // ========================================================================
-    // 3. SPHERICAL HARMONICS WITH DERIVATIVES
+    // 3. SPHERICAL HARMONICS ( NO DERIVATIVES )
     // ========================================================================
     // These kernels compute color and its derivatives w.r.t. view direction,
     // then use the chain rule to find derivatives w.r.t. 3D position.

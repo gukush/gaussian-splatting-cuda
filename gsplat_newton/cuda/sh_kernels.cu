@@ -210,7 +210,7 @@ __device__ void sh_coeffs_to_color_fast_LN(
     vec3 *v_dir,        // [3] optional (in LN this is dc~/drk)
     scalar_t* H_dir     // [6] (in LN this is d2c~/drk2) stored like: [Hxx, Hyy, Hzz, Hxy, Hxz, Hyz]
 ) {
-    float v_colors_local = v_colors[c];
+    float v_colors_local = v_colors[0];
     if (c == 0) { // Only zero out on the first channel call
         if (v_dir != nullptr) { v_dir->x = 0.f; v_dir->y = 0.f; v_dir->z = 0.f; }
         if (H_dir != nullptr) {
@@ -390,7 +390,7 @@ __global__ void spherical_harmonics_LN_kernel(
     // pointers for this sample
     const vec3    dir         = dirs[idx];
     const scalar_t* coeffs_ptr = coeffs    + idx * K * 3;
-    const scalar_t* vc_ptr     = v_colors  + idx * 3;
+    const scalar_t* vc_ptr     = v_colors  + idx; // because it is the same for each channel!
           scalar_t* vc_out_ptr = out_v_coeffs + idx * K * 3;
           vec3*     vd_ptr     = out_v_dir    ? &out_v_dir[idx] : nullptr;
           scalar_t* h_ptr      = out_H_dir    ? out_H_dir + idx * 6 : nullptr;

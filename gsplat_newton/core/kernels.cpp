@@ -350,7 +350,7 @@ compute_intermediate_derivatives_bwd(
 
     // Create output tensors
     at::Tensor dc_dcSH = at::zeros({N,1}, means2d.options());
-    at::Tensor dc_dG = at::zeros({N}, means2d.options());
+    at::Tensor dc_dG = at::zeros({N,3}, means2d.options());
     at::Tensor dG_dmean2d = at::zeros({N, 2}, means2d.options());
     at::Tensor dG_dSigma = at::zeros({N, 3}, means2d.options());
     at::Tensor H_G_mean2d = at::zeros({N, 3}, means2d.options());

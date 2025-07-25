@@ -105,13 +105,14 @@ inline __device__ mat3 quat_to_rotmat(const vec4 quat) {
 /**
  * @brief Corrected position gradient computation with RGB channel handling
  */
-__device__ __forceinline__ vec3 compute_dc_dpk_local_rgb(
+/*
+ __device__ __forceinline__ vec3 compute_dc_dpk_local_rgb(
     const float dc_dc_sh,
     const float dc_dG,
     const vec2& dG_dmean2d,
     const vec3& dG_dSigma,
     const mat3& dc_sh_dp,     // 3x3 matrix: channels x position components
-    const mat2x3& J,
+    const mat3x2& J,
     const mat2 dSigma_dpx, const mat2 dSigma_dpy, const mat2 dSigma_dpz
 ) {
     vec3 grad = {0.f, 0.f, 0.f};
@@ -119,9 +120,15 @@ __device__ __forceinline__ vec3 compute_dc_dpk_local_rgb(
     // Term 1: Spherical harmonics contribution - corrected for RGB channels
     // dc_sh_dp[i][j] = ∂(color_channel_i)/∂(position_component_j)
     // We need to sum over color channels for each position component
-    grad.x += dc_dc_sh * (dc_sh_dp[0][0] + dc_sh_dp[1][0] + dc_sh_dp[2][0]); // Sum RGB for px
-    grad.y += dc_dc_sh * (dc_sh_dp[0][1] + dc_sh_dp[1][1] + dc_sh_dp[2][1]); // Sum RGB for py
-    grad.z += dc_dc_sh * (dc_sh_dp[0][2] + dc_sh_dp[1][2] + dc_sh_dp[2][2]); // Sum RGB for pz
+    //grad.x += dc_dc_sh * (dc_sh_dp[0][0] + dc_sh_dp[1][0] + dc_sh_dp[2][0]); // Sum RGB for px
+    //grad.y += dc_dc_sh * (dc_sh_dp[0][1] + dc_sh_dp[1][1] + dc_sh_dp[2][1]); // Sum RGB for py
+    //grad.z += dc_dc_sh * (dc_sh_dp[0][2] + dc_sh_dp[1][2] + dc_sh_dp[2][2]); // Sum RGB for pz
+
+    const glm::vec3 ones(1.0f);
+    glm::vec3 grad = dc_dc_sh * glm::vec3(
+        glm::dot(dc_sh_dp[0], ones),       // Σ column‑0
+        glm::dot(dc_sh_dp[1], ones),       // Σ column‑1
+        glm::dot(dc_sh_dp[2], ones));
 
     // Term 2: Gaussian weight contribution (unchanged)
     if (fabsf(dc_dG) > 1e-7f) {
@@ -139,7 +146,7 @@ __device__ __forceinline__ vec3 compute_dc_dpk_local_rgb(
     }
     return grad;
 }
-
+*/
 // HELPERS Sigma_inv to Sigma for derivatives conversion
 
 /**
@@ -450,7 +457,9 @@ __device__ __forceinline__ void convert_all_inverse_derivatives(
     convert_second_derivative_inverse_to_covariance(dG_dSinv, H_G_Sinv, Sigma_inv, H_G_Sigma);
 
     // Convert mixed derivatives
-    convert_mixed_derivatives_inverse_to_covariance(H_G_mixed_inv, Sigma_inv, H_G_mixed);
+    if (H_G_mixed_inv != nullptr) {
+        convert_mixed_derivatives_inverse_to_covariance(H_G_mixed_inv, Sigma_inv, H_G_mixed);
+    }
 }
 
 // END Sigma_inv
@@ -475,36 +484,55 @@ compute_dc_dpk_local(
     const vec2& dG_dmean2d,
     const vec3& dG_dSigma, // {dG/dΣxx, dG/dΣxy, dG/dΣyy}
     const mat3& dc_sh_dp,   // ∂c̃ₖ/∂pₖ
-    const mat2x3& J,        // ∂πₖ/∂pₖ
+    const mat3x2& J,        // ∂πₖ/∂pₖ
     const mat2 dSigma_dpx, const mat2 dSigma_dpy, const mat2 dSigma_dpz)
 {
-    vec3 grad = {0.f, 0.f, 0.f};
 
     // Term 1: (∂c/∂c̃ₖ) * (∂c̃ₖ/∂pₖ)
     // The original code sums the columns.
     // dc_sh_dp.data[0][0] + dc_sh_dp.data[1][0] + dc_sh_dp.data[2][0] is the sum of column 0.
     // In GLM, this is dc_sh_dp[0][0] + dc_sh_dp[0][1] + dc_sh_dp[0][2].
-    grad.x += dc_dc_sh * (dc_sh_dp[0][0] + dc_sh_dp[0][1] + dc_sh_dp[0][2]); // Sum of column 0
-    grad.y += dc_dc_sh * (dc_sh_dp[1][0] + dc_sh_dp[1][1] + dc_sh_dp[1][2]); // Sum of column 1
-    grad.z += dc_dc_sh * (dc_sh_dp[2][0] + dc_sh_dp[2][1] + dc_sh_dp[2][2]); // Sum of column 2
+    const glm::vec3 ones(1.0f);
+    glm::vec3 grad = dc_dc_sh * glm::vec3(
+        glm::dot(dc_sh_dp[0], ones),       // Σ column‑0
+        glm::dot(dc_sh_dp[1], ones),       // Σ column‑1
+        glm::dot(dc_sh_dp[2], ones));      // Σ column‑2
 
     // Term 2: (∂c/∂Gₖ) * [ (∂Gₖ/∂πₖ) * (∂πₖ/∂pₖ) + (∂Gₖ/∂Σₖ) : (∂Σₖ/∂pₖ) ]
     if (abs(dc_dG) > 1e-7) {
         // (∂Gₖ/∂πₖ) * (∂πₖ/∂pₖ) -> vec2 * mat2x3 = vec3
         // J.data[row][col] becomes J[col][row]
-        grad.x += dc_dG * (dG_dmean2d.x * J[0][0] + dG_dmean2d.y * J[0][1]);
-        grad.y += dc_dG * (dG_dmean2d.x * J[1][0] + dG_dmean2d.y * J[1][1]);
-        grad.z += dc_dG * (dG_dmean2d.x * J[2][0] + dG_dmean2d.y * J[2][1]);
-
+        //grad.x += dc_dG * (dG_dmean2d.x * J[0][0] + dG_dmean2d.y * J[0][1]);
+        //grad.y += dc_dG * (dG_dmean2d.x * J[1][0] + dG_dmean2d.y * J[1][1]);
+        //grad.z += dc_dG * (dG_dmean2d.x * J[2][0] + dG_dmean2d.y * J[2][1]);
+        //grad += dc_dG * (dG_dmean2d * glm::transpose(J));
+        grad += dc_dG * glm::vec3(
+            glm::dot(dG_dmean2d, J[0]),   // column 0 of J
+            glm::dot(dG_dmean2d, J[1]),   // column 1
+            glm::dot(dG_dmean2d, J[2]));  // column 2
         // (∂Gₖ/∂Σₖ) : (∂Σₖ/∂pₖ) -> Frobenius inner product
         // dSigma_dpx.data[row][col] becomes dSigma_dpx[col][row]
-        float dG_S_dp_x = dG_dSigma.x * dSigma_dpx[0][0] + 2.f * dG_dSigma.y * dSigma_dpx[1][0] + dG_dSigma.z * dSigma_dpx[1][1];
-        float dG_S_dp_y = dG_dSigma.x * dSigma_dpy[0][0] + 2.f * dG_dSigma.y * dSigma_dpy[1][0] + dG_dSigma.z * dSigma_dpy[1][1];
-        float dG_S_dp_z = dG_dSigma.x * dSigma_dpz[0][0] + 2.f * dG_dSigma.y * dSigma_dpz[1][0] + dG_dSigma.z * dSigma_dpz[1][1];
+        //float dG_S_dp_x = dG_dSigma.x * dSigma_dpx[0][0] + 2.f * dG_dSigma.y * dSigma_dpx[1][0] + dG_dSigma.z * dSigma_dpx[1][1];
+        //float dG_S_dp_y = dG_dSigma.x * dSigma_dpy[0][0] + 2.f * dG_dSigma.y * dSigma_dpy[1][0] + dG_dSigma.z * dSigma_dpy[1][1];
+        //float dG_S_dp_z = dG_dSigma.x * dSigma_dpz[0][0] + 2.f * dG_dSigma.y * dSigma_dpz[1][0] + dG_dSigma.z * dSigma_dpz[1][1];
 
-        grad.x += dc_dG * dG_S_dp_x;
-        grad.y += dc_dG * dG_S_dp_y;
-        grad.z += dc_dG * dG_S_dp_z;
+        //grad.x += dc_dG * dG_S_dp_x;
+        //grad.y += dc_dG * dG_S_dp_y;
+        //grad.z += dc_dG * dG_S_dp_z;
+        // helper for Frobenius   ⟨∂G/∂Σ , ∂Σ/∂p⟩  (  Σxy appears twice )
+        auto contractSigma = [&] __device__ (const glm::mat2& dS_dp) -> float
+        {
+            return glm::dot(
+                dG_dSigma,
+                glm::vec3( dS_dp[0][0],            // Σxx
+                           2.f * dS_dp[1][0],      // 2 Σxy
+                           dS_dp[1][1]));          // Σyy
+        };
+
+        grad += dc_dG * glm::vec3(
+            contractSigma(dSigma_dpx),
+            contractSigma(dSigma_dpy),
+            contractSigma(dSigma_dpz));
     }
     return grad;
 }
@@ -523,7 +551,7 @@ compute_d2c_dpk2_local(
     const vec3& H_G_mean2d, const float H_G_sigma[6], const float H_G_mixed[6],
     const mat3& H_c_sh_p,
     const mat3 H_pi_px, const mat3 H_pi_py,
-    const mat2x3& J,
+    const mat3x2& J,
     const mat3 H_Sigma_pxx, const mat3 H_Sigma_pxy, const mat3 H_Sigma_pyy,
     const mat2 dSigma_dpx, const mat2 dSigma_dpy, const mat2 dSigma_dpz
 )
@@ -545,8 +573,9 @@ compute_d2c_dpk2_local(
     // Construct H_G_pi with column vectors as per GLM convention
     mat2 H_G_pi(vec2(H_G_mean2d.x, H_G_mean2d.y), vec2(H_G_mean2d.y, H_G_mean2d.z));
     // Replaced direct matrix multiplication with loops due to GLM error
-    //H += glm::transpose(J) * H_G_pi * J;
-    mat3x2 J_T = glm::transpose(J);
+    H += glm::transpose(J) * H_G_pi * J;
+    /*
+    mat2x3 J_T = glm::transpose(J);
     // Step 1: Compute the intermediate matrix: temp_mat = J_T * H_G_pi (a 3x2 matrix)
     mat3x2 temp_mat;
     // First column of temp_mat
@@ -574,6 +603,7 @@ compute_d2c_dpk2_local(
     H[0][0] += Jt_H_J[0][0]; H[0][1] += Jt_H_J[0][1]; H[0][2] += Jt_H_J[0][2];
     H[1][0] += Jt_H_J[1][0]; H[1][1] += Jt_H_J[1][1]; H[1][2] += Jt_H_J[1][2];
     H[2][0] += Jt_H_J[2][0]; H[2][1] += Jt_H_J[2][1]; H[2][2] += Jt_H_J[2][2];
+    */
         // Term 4: (∂Σₖ/∂pₖ)ᵀ : (∂²Gₖ/∂Σₖ²) : (∂Σₖ/∂pₖ)
     {
         const mat2 dS_dp[3] = {dSigma_dpx, dSigma_dpy, dSigma_dpz};
@@ -718,7 +748,7 @@ __device__ __forceinline__ void compute_rotation_derivatives(
 __global__ void compute_position_derivatives_kernel(
     const int num_gaussians,
     const float *__restrict__ dc_dcSH_totals,
-    const float *__restrict__ dc_dG_totals,
+    const vec3 *__restrict__ dc_dG_totals,
     const vec2 *__restrict__ dG_dmean2d_totals,
     const vec3 *__restrict__ dG_dSigma_inv_totals,
     const vec3 *__restrict__ H_G_mean2d_totals,
@@ -736,8 +766,8 @@ __global__ void compute_position_derivatives_kernel(
     const vec3 *__restrict__ d2L_dc2,
     const vec3 *__restrict__ campos,
     // OUTPUTS:
-    vec2 *__restrict__ d_L_vk,
-    mat2 *__restrict__ H_L_vk
+    vec2 *__restrict__ d_L_vk, // [N, CDIM, 2]
+    mat2 *__restrict__ H_L_vk  // [N, CDIM, 3] - 2x2 symmetric
 ) {
     const int g_idx = blockIdx.x * blockDim.x + threadIdx.x;
     if (g_idx >= num_gaussians) return;
@@ -788,12 +818,12 @@ __global__ void compute_position_derivatives_kernel(
 
     // Compute derivatives w.r.t. position - sum over RGB channels properly
     const float dc_dc_sh = dc_dcSH_totals[g_idx];
-    const float dc_dG = dc_dG_totals[g_idx];
+    const vec3 dc_dG = dc_dG_totals[g_idx];
     const vec2 dG_dmean2d = dG_dmean2d_totals[g_idx];
     const vec3 H_G_mean2d = H_G_mean2d_totals[g_idx];
 
-    // Position gradient computation with RGB channel handling
-    vec3 final_grad = compute_dc_dpk_local_rgb(
+    // Position gradient computation
+    vec3 final_grad = compute_dc_dpk_local(
         dc_dc_sh, dc_dG, dG_dmean2d, dG_dSigma,
         dc_sh_dp[g_idx], jacobians[g_idx],
         dSigma_dpx, dSigma_dpy, dSigma_dpz
