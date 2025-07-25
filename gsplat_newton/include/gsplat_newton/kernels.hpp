@@ -90,6 +90,13 @@ projection_ewa_3dgs_fused_fwd_LN(
     const gsplat::CameraModelType camera_model
 );
 
+std::tuple<at::Tensor, at::Tensor> compute_covariance_derivatives(
+    const at::Tensor means,       // [N, 3] world positions
+    const at::Tensor quats,       // [N, 4] quaternions [w, x, y, z]
+    const at::Tensor scales,      // [N, 3] scale parameters
+    const at::Tensor view_matrix // [4, 4] view matrix (camera to world)
+);
+
 
 // ========================================================================
 // 2. SPHERICAL HARMONICS (SH) KERNELS
@@ -248,6 +255,7 @@ assemble_newton_derivatives_split(
     const at::Tensor H_G_mixed_totals,
     // Projection derivatives
     const at::Tensor jacobians,
+    const at::Tensor viewmat,
     const at::Tensor dSigma_dp,
     const at::Tensor dc_sh_dp,
     const at::Tensor H_mean2d_dp,
@@ -255,7 +263,7 @@ assemble_newton_derivatives_split(
     const at::Tensor H_Sigma_dp,
     const at::Tensor dSigma_dtheta_inputs,
     const at::Tensor d2Sigma_dtheta2_inputs,
-    const at::Tensor T_matrices,
+    const at::Tensor quats,
     const at::Tensor conics_2d,
     const at::Tensor p_k,
     const at::Tensor camera_pos,
@@ -298,6 +306,16 @@ void launch_projection_ewa_3dgs_fused_fwd_kernel_LN(
     at::Tensor H_Sigma,                    // [C, N, 3] (stores [H_S_xz, H_S_yz, H_S_zz])
     at::Tensor dr_dp,                      // [C, N, 3, 3]
     at::Tensor d2r_dp2_compact             // [C, N, 18]
+);
+
+
+void launch_compute_covariance_derivatives_kernel(
+    const at::Tensor quat,        // [N, 4] quaternions
+    const at::Tensor scale,       // [N, 3] scales
+    const at::Tensor view_matrix, // [4, 4] view matrix
+    const at::Tensor position,    // [N, 3] positions
+    at::Tensor dSigma_dtheta,     // [N, 2, 2] output first derivatives
+    at::Tensor d2Sigma_dtheta2    // [N, 2, 2] output second derivatives
 );
 
 void launch_spherical_harmonics_LN_kernel(
@@ -351,7 +369,9 @@ void launch_compute_scale_derivatives_kernel(
     const at::Tensor dc_dG_totals,
     const at::Tensor dG_dSigma_inv_totals,
     const at::Tensor H_G_sigma_inv_totals,
-    const at::Tensor T_matrices,
+    const at::Tensor jacobians,
+    const at::Tensor viewmats,
+    const at::Tensor quats,
     const at::Tensor conics_2d,
     const at::Tensor dL_dc,
     const at::Tensor H_L_dc,

@@ -228,6 +228,8 @@ namespace gs {
         }
         // Here we would need to do the overshoot prevention.
         // but it requires 2 smaller images to be completely iterated in the same manner.
+        // currently in this place the train_dataset_->get method fails - TODO fix
+        /*
         auto neighbors = camera_knn_->find_neighbors(cam->uid(), 3);
         for(int n_idx: neighbors) {
             auto neighbor_cam_from_set = train_dataset_->get(n_idx);
@@ -279,7 +281,7 @@ namespace gs {
             ctx.dL_d_color += tmp_ctx.dL_d_color;
             ctx.H_L_color += tmp_ctx.H_L_color;
         }
-
+        */
         // --- Stage 3: Solve Systems, Backproject, and Apply Updates ---
         if (iter % 100 == 0) {
             std::cout << "running solve for updates";
@@ -383,7 +385,6 @@ namespace gs {
                 auto camera_with_image = batch[0].data;
                 Camera* cam = camera_with_image.camera;
                 torch::Tensor gt_image = std::move(camera_with_image.image);
-
                 should_continue = train_step(iter, cam, gt_image, render_mode);
 
                 if (!should_continue) {

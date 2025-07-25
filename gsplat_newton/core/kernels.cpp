@@ -135,6 +135,39 @@ projection_ewa_3dgs_fused_fwd_LN(
     );
 }
 
+
+std::tuple<at::Tensor, at::Tensor> compute_covariance_derivatives(
+    const at::Tensor means,       // [N, 3] world positions
+    const at::Tensor quats,       // [N, 4] quaternions [w, x, y, z]
+    const at::Tensor scales,      // [N, 3] scale parameters
+    const at::Tensor view_matrix // [4, 4] view matrix (camera to world)
+) {
+    DEVICE_GUARD(means);
+    CHECK_INPUT(means);
+    CHECK_INPUT(quats);
+    CHECK_INPUT(scales);
+    CHECK_INPUT(view_matrix);
+
+    uint32_t N = means.size(0);  // number of gaussians
+
+    // Create output tensors
+    at::Tensor dSigma_dtheta = at::empty({N, 2, 2}, means.options());    // [N, 2, 2] first derivatives
+    at::Tensor d2Sigma_dtheta2 = at::empty({N, 2, 2}, means.options());  // [N, 2, 2] second derivatives
+
+    // Launch the kernel
+    launch_compute_covariance_derivatives_kernel(
+        quats,
+        scales,
+        view_matrix,
+        means,
+        dSigma_dtheta,
+        d2Sigma_dtheta2
+    );
+
+    return std::make_tuple(dSigma_dtheta, d2Sigma_dtheta2);
+}
+
+
 // ========================================================================
 // 2. SPHERICAL HARMONICS (SH) KERNELS
 // ========================================================================
@@ -323,7 +356,7 @@ compute_intermediate_derivatives_bwd(
     at::Tensor H_G_mean2d = at::zeros({N, 3}, means2d.options());
     at::Tensor H_G_sigma = at::zeros({N, 6}, means2d.options());
     at::Tensor H_G_mixed = at::zeros({N, 6}, means2d.options());
-    at::Tensor v_opac = at::zeros({N}, means2d.options());
+    at::Tensor v_opac = at::zeros({N, 3}, means2d.options());
 
 #define __LAUNCH_KERNEL__(CHANNELS) \
     case CHANNELS: \
@@ -404,6 +437,7 @@ assemble_newton_derivatives_split(
     const at::Tensor H_G_mixed_totals,
     // Projection derivatives
     const at::Tensor jacobians,
+    const at::Tensor viewmat,
     const at::Tensor dSigma_dp,
     const at::Tensor dc_sh_dp,
     const at::Tensor H_mean2d_dp,
@@ -411,7 +445,7 @@ assemble_newton_derivatives_split(
     const at::Tensor H_Sigma_dp,
     const at::Tensor dSigma_dtheta_inputs,
     const at::Tensor d2Sigma_dtheta2_inputs,
-    const at::Tensor T_matrices,
+    const at::Tensor quats,
     const at::Tensor conics_2d,
     const at::Tensor p_k,
     const at::Tensor camera_pos,
@@ -465,7 +499,9 @@ assemble_newton_derivatives_split(
             dc_dG_totals,
             dG_dSigma_totals,
             H_G_sigma_totals,
-            T_matrices,
+            jacobians,
+            viewmat,
+            quats,
             conics_2d,
             dL_dc,
             H_L_dc,

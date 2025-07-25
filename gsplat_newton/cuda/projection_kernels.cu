@@ -459,163 +459,257 @@ void launch_projection_ewa_3dgs_fused_fwd_kernel_LN(
 
 
 #include <cmath>
+////////////////////////////////////////////////////////////////////////////////
+// General‑axis version of compute_covariance_derivatives_kernel_impl
+////////////////////////////////////////////////////////////////////////////////
+__global__ void compute_covariance_derivatives_kernel_impl(
+    const uint32_t  N,
+    const float* __restrict__ quat,        // [N,4]
+    const float* __restrict__ scale,       // [N,3]
+    const float* __restrict__ view_matrix, // [4,4]  row‑major
+    const float* __restrict__ position,    // [N,3]
+    float* __restrict__ dSigma_dtheta,     // [N,2,2]
+    float* __restrict__ d2Sigma_dtheta2)   // [N,2,2]
+{
+    const uint32_t gid = blockIdx.x * blockDim.x + threadIdx.x;
+    if (gid >= N) return;
 
-__device__ void compute_covariance_derivatives(
-    // Input parameters
-    const float* quat,        // [w, x, y, z] current rotation
-    const float* scale,       // [sx, sy, sz] scale parameters
-    const float* view_matrix, // 4x4 view matrix (camera to world)
-    const float* proj_matrix, // 3x4 projection matrix (camera to screen)
-    const float* position,    // [x, y, z] world position
-    // Output arrays
-    float* dSigma_dtheta,    // 2x2 matrix (row-major)
-    float* d2Sigma_dtheta2   // 2x2 matrix (row-major)
-) {
-    // 1. Compute 3D covariance in world space
+    //----------------------------------------------------------------------
+    // 0.  Pointers to this Gaussian’s data
+    //----------------------------------------------------------------------
+    const float* q  = quat     + gid*4;
+    const float* s  = scale    + gid*3;
+    const float* pW = position + gid*3;    // world
+
+    float* dS  = dSigma_dtheta    + gid*4; // 2×2 = 4
+    float* dS2 = d2Sigma_dtheta2  + gid*4;
+
+    //----------------------------------------------------------------------
+    // 1.  Covariance in world space :  M_W = R  S  Rᵀ
+    //----------------------------------------------------------------------
     float R[3][3];
-    float qw = quat[0], qx = quat[1], qy = quat[2], qz = quat[3];
-    R[0][0] = 1 - 2*qy*qy - 2*qz*qz;
-    R[0][1] = 2*qx*qy - 2*qz*qw;
-    R[0][2] = 2*qx*qz + 2*qy*qw;
-    R[1][0] = 2*qx*qy + 2*qz*qw;
-    R[1][1] = 1 - 2*qx*qx - 2*qz*qz;
-    R[1][2] = 2*qy*qz - 2*qx*qw;
-    R[2][0] = 2*qx*qz - 2*qy*qw;
-    R[2][1] = 2*qy*qz + 2*qx*qw;
-    R[2][2] = 1 - 2*qx*qx - 2*qy*qy;
+    {
+        const float qw = q[0], qx = q[1], qy = q[2], qz = q[3];
+        R[0][0] = 1.f - 2.f*(qy*qy + qz*qz);
+        R[0][1] = 2.f*(qx*qy - qz*qw);
+        R[0][2] = 2.f*(qx*qz + qy*qw);
+        R[1][0] = 2.f*(qx*qy + qz*qw);
+        R[1][1] = 1.f - 2.f*(qx*qx + qz*qz);
+        R[1][2] = 2.f*(qy*qz - qx*qw);
+        R[2][0] = 2.f*(qx*qz - qy*qw);
+        R[2][1] = 2.f*(qy*qz + qx*qw);
+        R[2][2] = 1.f - 2.f*(qx*qx + qy*qy);
+    }
+    const float S[3][3] = { {s[0]*s[0], 0.f, 0.f},
+                            {0.f, s[1]*s[1], 0.f},
+                            {0.f, 0.f, s[2]*s[2]} };
 
-    float S[3][3] = {{scale[0]*scale[0], 0, 0},
-                     {0, scale[1]*scale[1], 0},
-                     {0, 0, scale[2]*scale[2]}};
+    float RS[3][3], M_W[3][3];
+    #pragma unroll
+    for (int i=0;i<3;++i)
+        #pragma unroll
+        for (int j=0;j<3;++j)
+        {
+            float v=0.f;
+            #pragma unroll
+            for (int k=0;k<3;++k) v += R[i][k]*S[k][j];
+            RS[i][j]=v;
+        }
+    #pragma unroll
+    for (int i=0;i<3;++i)
+        #pragma unroll
+        for (int j=0;j<3;++j)
+        {
+            float v=0.f;
+            #pragma unroll
+            for (int k=0;k<3;++k) v += RS[i][k]*R[j][k];
+            M_W[i][j]=v;
+        }
 
-    // Covariance = R*S*R�
-    float RS[3][3], cov_world[3][3];
-    for (int i = 0; i < 3; ++i) {
-        for (int j = 0; j < 3; ++j) {
-            RS[i][j] = 0.0f;
-            for (int k = 0; k < 3; ++k) {
-                RS[i][j] += R[i][k] * S[k][j];
-            }
+    //----------------------------------------------------------------------
+    // 2.  World position -> camera space  &  view direction r_k
+    //----------------------------------------------------------------------
+    float pC[3];                     // camera‑space position
+    {
+        const float ph[4] = {pW[0], pW[1], pW[2], 1.f};
+        #pragma unroll
+        for (int i=0;i<3;++i)
+        {
+            float v=0.f;
+            #pragma unroll
+            for (int j=0;j<4;++j) v += view_matrix[i*4+j]*ph[j];
+            pC[i]=v;
         }
     }
-    for (int i = 0; i < 3; ++i) {
-        for (int j = 0; j < 3; ++j) {
-            cov_world[i][j] = 0.0f;
-            for (int k = 0; k < 3; ++k) {
-                cov_world[i][j] += RS[i][k] * R[j][k];
-            }
+    const float z      = pC[2];
+    const float invL   = rsqrtf(pC[0]*pC[0] + pC[1]*pC[1] + pC[2]*pC[2] + 1e-20f); // |pC|⁻¹
+    const float rx     = pC[0]*invL;
+    const float ry     = pC[1]*invL;
+    const float rz     = pC[2]*invL;
+
+    //----------------------------------------------------------------------
+    // 3.  [r]ₓ   and   [r]ₓ²  (skew‑symm matrix and its square)
+    //----------------------------------------------------------------------
+    float rX[3][3]  = { {   0.f, -rz ,  ry },
+                        {  rz  ,  0.f, -rx },
+                        { -ry  ,  rx ,  0.f} };
+
+    float rX2[3][3];
+    #pragma unroll
+    for (int i=0;i<3;++i)
+        #pragma unroll
+        for (int j=0;j<3;++j)
+        {
+            float v=0.f;
+            #pragma unroll
+            for (int k=0;k<3;++k) v += rX[i][k]*rX[k][j];
+            rX2[i][j]=v;
         }
-    }
 
-    // 2. Transform position to camera space
-    float pos_cam[3];
-    float pos_homog[4] = {position[0], position[1], position[2], 1.0f};
-    for (int i = 0; i < 3; ++i) {
-        pos_cam[i] = 0.0f;
-        for (int j = 0; j < 4; ++j) {
-            pos_cam[i] += view_matrix[i*4+j] * pos_homog[j];
+    //----------------------------------------------------------------------
+    // 4.  Covariance in camera space :  M0 = R_cam M_W R_camᵀ
+    //----------------------------------------------------------------------
+    float M0[3][3];
+    #pragma unroll
+    for (int i=0;i<3;++i)
+        #pragma unroll
+        for (int j=0;j<3;++j)
+        {
+            float v=0.f;
+            #pragma unroll
+            for (int k=0;k<3;++k)
+            {
+                float t=0.f;
+                #pragma unroll
+                for (int l=0;l<3;++l)
+                    t += view_matrix[i*4+l]*M_W[l][k];
+                v += t*view_matrix[j*4+k];
+            }
+            M0[i][j]=v;
         }
-    }
-    float z = pos_cam[2];
 
-    // 3. Compute Jacobian J of projective transform
-    float J[2][3] = {
-        {1/z, 0, -pos_cam[0]/(z*z)},
-        {0, 1/z, -pos_cam[1]/(z*z)}
-    };
+    //----------------------------------------------------------------------
+    // 5.  First & second derivative of  M(θ)  at θ=0
+    //----------------------------------------------------------------------
+    float dM[3][3], d2M[3][3];
 
-    // 4. Compute 3D covariance in camera space (M0)
-    float cov_cam[3][3];
-    for (int i = 0; i < 3; ++i) {
-        for (int j = 0; j < 3; ++j) {
-            cov_cam[i][j] = 0.0f;
-            for (int k = 0; k < 3; ++k) {
-                for (int l = 0; l < 3; ++l) {
-                    cov_cam[i][j] += view_matrix[i*4+k] * cov_world[k][l] * view_matrix[j*4+l];
-                }
-            }
+    // dM = rX*M0 + M0*rXᵀ
+    #pragma unroll
+    for (int i=0;i<3;++i)
+        #pragma unroll
+        for (int j=0;j<3;++j)
+        {
+            float a=0.f, b=0.f;
+            #pragma unroll
+            for (int k=0;k<3;++k)  a += rX[i][k]*M0[k][j];
+            #pragma unroll
+            for (int k=0;k<3;++k)  b += M0[i][k]*rX[j][k];   // rXᵀ
+            dM[i][j] = a + b;
         }
-    }
 
-    // 5. Precompute derivative matrices (at θ=0)
-    float dR0[3][3] = {{0, -1, 0}, {1, 0, 0}, {0, 0, 0}};
-    float dR02[3][3] = {{-1, 0, 0}, {0, -1, 0}, {0, 0, 0}};
-
-    // 6. Compute dM/dθ = dR0*M0 + M0*dR0ᵀ
-    float dM_dtheta[3][3];
-    for (int i = 0; i < 3; ++i) {
-        for (int j = 0; j < 3; ++j) {
-            dM_dtheta[i][j] = 0.0f;
-            // dR0*M0
-            for (int k = 0; k < 3; ++k) {
-                dM_dtheta[i][j] += dR0[i][k] * cov_cam[k][j];
-            }
-            // M0*dR0ᵀ
-            for (int k = 0; k < 3; ++k) {
-                dM_dtheta[i][j] += cov_cam[i][k] * dR0[j][k];
-            }
-        }
-    }
-
-    // 7. Compute d²M/dθ² = dR02*M0 + M0*dR02ᵀ + 2*(dR0*M0*dR0ᵀ)
-    float d2M_dtheta2[3][3];
-    // dR02*M0 + M0*dR02ᵀ
-    for (int i = 0; i < 3; ++i) {
-        for (int j = 0; j < 3; ++j) {
-            d2M_dtheta2[i][j] = 0.0f;
-            // dR02*M0
-            for (int k = 0; k < 3; ++k) {
-                d2M_dtheta2[i][j] += dR02[i][k] * cov_cam[k][j];
-            }
-            // M0*dR02ᵀ
-            for (int k = 0; k < 3; ++k) {
-                d2M_dtheta2[i][j] += cov_cam[i][k] * dR02[j][k];
-            }
-        }
-    }
-    // + 2*(dR0*M0*dR0ᵀ)
+    // temp = rX*M0
     float temp[3][3];
-    for (int i = 0; i < 3; ++i) {
-        for (int j = 0; j < 3; ++j) {
-            temp[i][j] = 0.0f;
-            for (int k = 0; k < 3; ++k) {
-                temp[i][j] += dR0[i][k] * cov_cam[k][j];
-            }
+    #pragma unroll
+    for (int i=0;i<3;++i)
+        #pragma unroll
+        for (int j=0;j<3;++j)
+        {
+            float v=0.f;
+            #pragma unroll
+            for (int k=0;k<3;++k) v += rX[i][k]*M0[k][j];
+            temp[i][j]=v;
         }
-    }
-    for (int i = 0; i < 3; ++i) {
-        for (int j = 0; j < 3; ++j) {
-            float val = 0.0f;
-            for (int k = 0; k < 3; ++k) {
-                val += temp[i][k] * dR0[j][k];
-            }
-            d2M_dtheta2[i][j] += 2.0f * val;
-        }
-    }
 
-    // 8. Project to 2D: Σ = J * M * Jᵀ
-    float JdM[2][3], Jd2M[2][3];
-    for (int i = 0; i < 2; ++i) {
-        for (int j = 0; j < 3; ++j) {
-            JdM[i][j] = 0.0f;
-            Jd2M[i][j] = 0.0f;
-            for (int k = 0; k < 3; ++k) {
-                JdM[i][j] += J[i][k] * dM_dtheta[k][j];
-                Jd2M[i][j] += J[i][k] * d2M_dtheta2[k][j];
-            }
+    // d2M = rX2*M0 + M0*rX2ᵀ + 2*temp*rXᵀ
+    #pragma unroll
+    for (int i=0;i<3;++i)
+        #pragma unroll
+        for (int j=0;j<3;++j)
+        {
+            float v1=0.f, v2=0.f, v3=0.f;
+            #pragma unroll
+            for (int k=0;k<3;++k)  v1 += rX2[i][k]*M0[k][j];
+            #pragma unroll
+            for (int k=0;k<3;++k)  v2 += M0[i][k]*rX2[j][k];
+            #pragma unroll
+            for (int k=0;k<3;++k)  v3 += temp[i][k]*rX[j][k];
+            d2M[i][j] = v1 + v2 + 2.f*v3;
         }
-    }
 
-    // 9. Final 2D covariance derivatives
-    for (int i = 0; i < 2; ++i) {
-        for (int j = 0; j < 2; ++j) {
-            dSigma_dtheta[i*2+j] = 0.0f;
-            d2Sigma_dtheta2[i*2+j] = 0.0f;
-            for (int k = 0; k < 3; ++k) {
-                dSigma_dtheta[i*2+j] += JdM[i][k] * J[j][k];
-                d2Sigma_dtheta2[i*2+j] += Jd2M[i][k] * J[j][k];
+    //----------------------------------------------------------------------
+    // 6.  Jacobian of the perspective projection  J
+    //----------------------------------------------------------------------
+    const float invZ  = 1.f / z;
+    const float invZ2 = invZ * invZ;
+    const float J[2][3] = { { invZ, 0.f  , -pC[0]*invZ2 },
+                            { 0.f , invZ , -pC[1]*invZ2 } };
+
+    //----------------------------------------------------------------------
+    // 7.  Project derivatives :  Σ = J M Jᵀ
+    //----------------------------------------------------------------------
+    float JdM [2][3], Jd2M[2][3];
+    #pragma unroll
+    for (int i=0;i<2;++i)
+        #pragma unroll
+        for (int k=0;k<3;++k)
+        {
+            float a=0.f, b=0.f;
+            #pragma unroll
+            for (int j=0;j<3;++j)
+            {
+                a += J[i][j]*dM [j][k];
+                b += J[i][j]*d2M[j][k];
             }
+            JdM [i][k]=a;
+            Jd2M[i][k]=b;
         }
-    }
+
+    //----------------------------------------------------------------------
+    // 8.  Final 2×2 blocks (row‑major)
+    //----------------------------------------------------------------------
+    #pragma unroll
+    for (int i=0;i<2;++i)
+        #pragma unroll
+        for (int j=0;j<2;++j)
+        {
+            float s1=0.f, s2=0.f;
+            #pragma unroll
+            for (int k=0;k<3;++k)
+            {
+                s1 += JdM [i][k]*J[j][k];
+                s2 += Jd2M[i][k]*J[j][k];
+            }
+            dS [i*2+j] = s1;
+            dS2[i*2+j] = s2;
+        }
 }
+
+
+// Launcher function following the same pattern as your existing code
+void launch_compute_covariance_derivatives_kernel(
+    const at::Tensor quat,        // [N, 4] quaternions
+    const at::Tensor scale,       // [N, 3] scales
+    const at::Tensor view_matrix, // [4, 4] view matrix
+    const at::Tensor position,    // [N, 3] positions
+    at::Tensor dSigma_dtheta,     // [N, 2, 2] output first derivatives
+    at::Tensor d2Sigma_dtheta2    // [N, 2, 2] output second derivatives
+) {
+    const uint32_t N = position.size(0);
+    if (N == 0) return;
+
+    const dim3 threads(256);
+    const dim3 blocks((N + threads.x - 1) / threads.x);
+
+    compute_covariance_derivatives_kernel_impl<<<blocks, threads, 0, at::cuda::getCurrentCUDAStream()>>>(
+        N,
+        quat.data_ptr<float>(),
+        scale.data_ptr<float>(),
+        view_matrix.data_ptr<float>(),
+        position.data_ptr<float>(),
+        dSigma_dtheta.data_ptr<float>(),
+        d2Sigma_dtheta2.data_ptr<float>()
+    );
+    C10_CUDA_KERNEL_LAUNCH_CHECK();
+}
+
 } // namespace gsplat_newton

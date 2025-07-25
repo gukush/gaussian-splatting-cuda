@@ -60,6 +60,17 @@ void local_newton_backward(
         means.size(0)
     );
 
+
+    auto dtheta_out = compute_covariance_derivatives(
+        means,
+        quats,
+        scales,
+        viewmat
+    );
+
+    auto& dSigma_dtheta = std::get<0>(dtheta_out);
+    auto& H_Sigma_dtheta = std::get<1>(dtheta_out);
+
     auto& dc_dcSH_totals = std::get<0>(intermediate_derivs);
     auto& dc_dG_totals = std::get<1>(intermediate_derivs);
     auto& dG_dmean2d_totals = std::get<2>(intermediate_derivs);
@@ -106,14 +117,15 @@ void local_newton_backward(
         H_G_mixed_totals,
         // Projection derivatives from context
         context.d_mean2d_dp, // jacobians
+        context.viewmat,
         context.d_Sigma_dp, // ∂Σ/∂p  [N,3,3]
         d_cSH_dp, // dc_sh_dp
-        context.H_mean2d_dp, // ∂²π/∂p² [N,2,3]
+        context.H_mean2d_dp, // ∂²π/∂p² [N,2,3,3]
         H_cSH_dp, // H_c_sh_p
         context.H_Sigma_dp, // ∂²Σ/∂p² [N,3,3]
-        context.d_Sigma_dtheta,
-        context.H_Sigma_dtheta,
-        context.T_matrices,
+        dSigma_dtheta,
+        H_Sigma_dtheta,
+        quats,
         context.conics,
         means, // p_k
         context.campos,// camera_pos
