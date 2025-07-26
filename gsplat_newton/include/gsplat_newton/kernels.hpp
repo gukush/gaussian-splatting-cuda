@@ -210,7 +210,7 @@ void aggregate_intermediate_derivatives(
 
 
 std::tuple<at::Tensor, at::Tensor, at::Tensor, at::Tensor, at::Tensor,
-           at::Tensor, at::Tensor, at::Tensor>
+           at::Tensor, at::Tensor, at::Tensor, at::Tensor, at::Tensor>
 compute_intermediate_derivatives_bwd(
     // Gaussian parameters
     const at::Tensor means2d,
@@ -230,8 +230,8 @@ compute_intermediate_derivatives_bwd(
     const at::Tensor render_alphas,
     const at::Tensor last_ids,
     // gradients of outputs
-    //const at::Tensor v_render_colors,
-    //const at::Tensor v_render_alphas,
+    const at::Tensor dL_dcIMG,
+    const at::Tensor H_L_dcIMG,
     // output shapes
     const int64_t N
 );
@@ -241,36 +241,33 @@ compute_intermediate_derivatives_bwd(
 // 4. ASSEMBLY & UPDATE KERNELS
 // ========================================================================
 
-std::tuple<at::Tensor, at::Tensor, at::Tensor,
-    at::Tensor, at::Tensor, at::Tensor, at::Tensor,
-    at::Tensor, at::Tensor, at::Tensor>
-assemble_newton_derivatives_split(
+std::tuple<at::Tensor, at::Tensor, at::Tensor,  at::Tensor,
+           at::Tensor, at::Tensor, at::Tensor, at::Tensor>
+assemble_derivatives_split(
     // Intermediate derivatives
-    const at::Tensor dc_dcSH_totals,
-    const at::Tensor dc_dG_totals,
-    const at::Tensor dG_dmean2d_totals,
-    const at::Tensor dG_dSigma_totals,
-    const at::Tensor H_G_mean2d_totals,
-    const at::Tensor H_G_sigma_totals,
-    const at::Tensor H_G_mixed_totals,
+    const at::Tensor dL_dcSH_totals,
+    const at::Tensor dL_dG_totals,
+    const at::Tensor dL_dmean2d_totals,
+    const at::Tensor dL_dconic_totals,
+    const at::Tensor H_L_mean2d_totals,
+    const at::Tensor H_L_conic_totals,
+    const at::Tensor H_L_mixedinv_totals,
     // Projection derivatives
     const at::Tensor jacobians,
     const at::Tensor viewmat,
     const at::Tensor dSigma_dp,
     const at::Tensor dc_sh_dp,
     const at::Tensor H_mean2d_dp,
-    const at::Tensor H_c_sh_p,
     const at::Tensor H_Sigma_dp,
     const at::Tensor dSigma_dtheta_inputs,
-    const at::Tensor d2Sigma_dtheta2_inputs,
+    const at::Tensor H_Sigma_dtheta_inputs,
     const at::Tensor quats,
     const at::Tensor conics_2d,
     const at::Tensor p_k,
     const at::Tensor camera_pos,
-    const at::Tensor dc_dopac,
-    const at::Tensor dcRAST_dck,
-    const at::Tensor dL_dc,
-    const at::Tensor H_L_dc
+    const at::Tensor dL_dck,
+//    const at::Tensor dL_dc,
+//    const at::Tensor H_L_dc
 );
 
 
@@ -338,79 +335,45 @@ void launch_chain_rule_color_position_kernel(
     at::Tensor       color_pos_hess   // [...,6]
 );
 
-
-
-void launch_compute_position_derivatives_kernel(
+void launch_assemble_derivatives_kernels(
     const int num_gaussians,
-    const at::Tensor dc_dcSH_totals,
-    const at::Tensor dc_dG_totals,
-    const at::Tensor dG_dmean2d_totals,
-    const at::Tensor dG_dSigma_inv_totals,
-    const at::Tensor H_G_mean2d_totals,
-    const at::Tensor H_G_sigma_inv_totals,
-    const at::Tensor H_G_mixed_inv_totals,
-    const at::Tensor jacobians,
-    const at::Tensor dSigma_dp,
-    const at::Tensor dc_sh_dp,
-    const at::Tensor H_mean2d_dp,
-    const at::Tensor H_c_sh_p,
-    const at::Tensor H_Sigma_dp,
+    // Input tensors for conversion
     const at::Tensor conics_2d,
-    const at::Tensor p_k,
-    const at::Tensor dL_dc,
-    const at::Tensor H_L_dc,
-    const at::Tensor camera_pos,
-    at::Tensor d_L_vk,
-    at::Tensor H_L_vk
-);
-
-void launch_compute_scale_derivatives_kernel(
-    const int num_gaussians,
-    const at::Tensor dc_dG_totals,
-    const at::Tensor dG_dSigma_inv_totals,
-    const at::Tensor H_G_sigma_inv_totals,
-    const at::Tensor jacobians,
+    const at::Tensor campos,
     const at::Tensor viewmats,
     const at::Tensor quats,
-    const at::Tensor conics_2d,
-    const at::Tensor dL_dc,
-    const at::Tensor H_L_dc,
-    at::Tensor dc_dlambda,
-    at::Tensor d2c_dlambda2
+    // ... other input tensors for the main kernels
+    const at::Tensor dL_dcSH_totals,
+    const at::Tensor dL_dG_totals,
+    const at::Tensor dL_dmean2d_totals,
+    const at::Tensor dL_dconic_totals,
+    const at::Tensor H_L_mean2d_totals,
+    const at::Tensor H_L_conic_totals,
+    const at::Tensor H_L_mixedinv_totals,
+    const at::Tensor jacobians,
+    const at::Tensor dSigma_dp,
+    const at::Tensor H_mean2d_dp,
+    const at::Tensor H_cSH_p,
+    const at::Tensor H_Sigma_dp,
+    const at::Tensor p_k,
+    const at::Tensor dSigma_dtheta,
+    const at::Tensor H_Sigma_dtheta,
+    // OUTPUTS:
+    at::Tensor d_L_vk, // [N, 2]
+    at::Tensor H_L_vk, // // [N, 3]
+    at::Tensor dL_dlambda,  // [N]
+    at::Tensor H_L_dlambda   // [N]
+    at::Tensor dL_dtheta, // [N]
+    at::Tensor d2L_dtheta2, // [N]
+    at::Tensor dL_dcoeffs,  // Output: ∂L / ∂c_k as a vec3 [N, num_sh_coeffs]
+    at::Tensor H_L_dcoeffs, // Output: Diagonal of ∂²L / ∂c_k² [N, num_sh_coeffs]
+    // opacity hessians and gradients are compute directly from rasterizaiton backward pass
+    // temporary outputs
+    at::Tensor dL_dSigma,
+    at::Tensor H_L_sigma,
+    at::Tensor H_L_mixed
 );
 
-void launch_compute_rotation_derivatives_kernel(
-    const int num_gaussians,
-    const at::Tensor dc_dG_totals,
-    const at::Tensor dG_dSigma_inv_totals,
-    const at::Tensor H_G_sigma_inv_totals,
-    const at::Tensor dSigma_dtheta_inputs,
-    const at::Tensor d2Sigma_dtheta2_inputs,
-    const at::Tensor conics_2d,
-    const at::Tensor dL_dc,
-    const at::Tensor H_L_dc,
-    at::Tensor dL_dtheta,
-    at::Tensor d2L_dtheta2
-);
-
-void launch_compute_opacity_derivatives_kernel(
-    const int num_gaussians,
-    const at::Tensor dc_dopac,
-    const at::Tensor dL_dc,
-    const at::Tensor H_L_dc,
-    at::Tensor dL_dopac,
-    at::Tensor H_L_dopac
-);
-
-void launch_compute_color_derivatives_kernel(
-    const int num_gaussians,
-    const int num_coeffs,
-    const at::Tensor dcRAST_dck,
-    const at::Tensor dL_dc,
-    const at::Tensor H_L_dc,
-    at::Tensor dL_dcolor,
-    at::Tensor H_L_dcolor
-);
 
 template <uint32_t CDIM>
 void launch_accumulate_y_2nd_order_kernel(
@@ -479,30 +442,39 @@ void launch_compute_y_updates_kernel(
     vec2* delta_y
 );
 
-template<uint32_t CDIM> void launch_compute_intermediate_derivatives_kernel(               \
-        const bool packed,                                                                 \
-        const at::Tensor means2d,                                                         \
-        const at::Tensor conics,                                                          \
-        const at::Tensor colors,                                                          \
-        const at::Tensor opacities,                                                       \
-        const at::optional<at::Tensor> backgrounds,                                       \
-        const at::optional<at::Tensor> masks,                                             \
-        const uint32_t image_width,                                                        \
-        const uint32_t image_height,                                                       \
-        const uint32_t tile_size,                                                          \
-        const at::Tensor tile_offsets,                                                    \
-        const at::Tensor flatten_ids,                                                     \
-        const at::Tensor render_alphas,                                                   \
-        const at::Tensor last_ids,                                                        \
-        at::Tensor dc_dcSH,                                                               \
-        at::Tensor dc_dG,                                                                 \
-        at::Tensor dG_dmean2d,                                                            \
-        at::Tensor dG_dSigma,                                                             \
-        at::Tensor H_G_mean2d,                                                            \
-        at::Tensor H_G_sigma,                                                             \
-        at::Tensor H_G_mixed,                                                             \
-        at::Tensor dc_opac);                                                              \
-
+template <uint32_t CDIM>
+void launch_compute_intermediate_derivatives_kernel(
+    const bool packed,
+    // --- Forward Pass Inputs ---
+    const at::Tensor means2d,
+    const at::Tensor conics,
+    const at::Tensor colors,
+    const at::Tensor opacities,
+    const at::optional<at::Tensor> backgrounds,
+    const at::optional<at::Tensor> masks,
+    const uint32_t image_width,
+    const uint32_t image_height,
+    const uint32_t tile_size,
+    const at::Tensor tile_offsets,
+    const at::Tensor flatten_ids,
+    // --- Forward Pass Outputs ---
+    const at::Tensor render_alphas,
+    const at::Tensor last_ids,
+    // --- Loss Gradients (ADDED) ---
+    const at::Tensor dL_dcIMG,
+    const at::Tensor H_L_dcIMG,
+    // --- OUTPUTS (per-Gaussian) ---
+    at::Tensor dL_dcSH,
+    at::Tensor H_L_dcSH,  // Fixed name from H_L_cSH
+    at::Tensor dL_dG,
+    at::Tensor dL_dmean2d,
+    at::Tensor dL_dconic,
+    at::Tensor H_L_mean2d,
+    at::Tensor H_L_conic,   // Fixed name from H_L_sigma
+    at::Tensor H_L_mixed,
+    at::Tensor dL_dopac,
+    at::Tensor H_L_dopac    // ADDED
+);
 
 
 

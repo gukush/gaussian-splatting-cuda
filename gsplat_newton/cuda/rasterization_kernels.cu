@@ -44,19 +44,21 @@ __global__ void compute_intermediate_derivatives_kernel(
     // --- Forward Pass Outputs ---
     const scalar_t *__restrict__ render_alphas,
     const int32_t *__restrict__ last_ids,
-    // --- Backward Pass Inputs (Output Gradients) ---
-    //const scalar_t *__restrict__ v_render_colors,
-    //const scalar_t *__restrict__ v_render_alphas,
+    // --- Loss Gradients ---
+    const scalar_t *__restrict__ dL_dcIMG,
+    const scalar_t *__restrict__ H_L_dcIMG,
 
-    // --- INTERMEDIATE OUTPUTS (per-Gaussian) ---
-    scalar_t *__restrict__ dc_dcSH,      // Σ(∂c/∂c̃ₖ) [N, 3] - but value is the same for each channel.
-    scalar_t *__restrict__ dc_dG,        // Σ(∂c/∂Gₖ) [N, 3]
-    vec2 *__restrict__ dG_dmean2d,       // Σ(∂Gₖ/∂πₖ)
-    vec3 *__restrict__ dG_dSigma,        // Σ(∂Gₖ/∂Σₖ)
-    vec3 *__restrict__ H_G_mean2d,       // Σ(∂²Gₖ/∂πₖ²)
-    scalar_t *__restrict__ H_G_sigma,    // Σ(∂²Gₖ/∂Σₖ²), shape [N, 6]
-    scalar_t *__restrict__ H_G_mixed,    // Σ(∂²Gₖ/∂πₖ∂Σₖ), shape [N, 6]
-    scalar_t *__restrict__ dc_opac        // Σ(∂c/∂σₖ) hopefully... ??? [N,3]
+    // --- FINAL DERIVATIVES (OUTPUT) ---
+    scalar_t *__restrict__ dL_dcSH,      // Σ(∂L/∂c̃ₖ) [N, 3]
+    scalar_t *__restrict__ H_L_dcsh,     // [N x 3 ???]
+    scalar_t *__restrict__ dL_dG,        // [N, 3]
+    vec2 *__restrict__ dL_dmean2d,       // [N, 2]
+    vec3 *__restrict__ dL_dconic,        // [N, 3]
+    vec3 *__restrict__ H_L_mean2d,       // [N, 3]
+    scalar_t *__restrict__ H_L_conic,    // [N, 6]
+    scalar_t *__restrict__ H_L_mixed,    // [N, 6]
+    scalar_t *__restrict__ dL_dopac,        // Σ(∂L/∂σₖ) hopefully... ??? [N, 3]
+    scalar_t *__restrict__ H_L_dopac     // [N, ???]
 ) {
     // --- Boilerplate: Thread and memory indexing (from original kernel) ---
     auto block = cg::this_thread_block();
@@ -70,8 +72,6 @@ __global__ void compute_intermediate_derivatives_kernel(
     tile_offsets += camera_id * tile_height * tile_width;
     render_alphas += camera_id * image_height * image_width;
     last_ids += camera_id * image_height * image_width;
-    //v_render_colors += camera_id * image_height * image_width * CDIM;
-    //v_render_alphas += camera_id * image_height * image_width;
     if (backgrounds != nullptr) {
         backgrounds += camera_id * CDIM;
     }
@@ -98,14 +98,6 @@ __global__ void compute_intermediate_derivatives_kernel(
     float T = T_final;
     float buffer[CDIM] = {0.f};
     const int32_t bin_final = inside ? last_ids[pix_id] : 0;
-    /*
-    float v_render_c[CDIM];
-#pragma unroll
-    for (uint32_t k = 0; k < CDIM; ++k) {
-        v_render_c[k] = v_render_colors[pix_id * CDIM + k];
-    }
-    const float v_render_a = v_render_alphas[pix_id];
-    */
     // --- Main Loop over Gaussian Batches ---
     int32_t range_start = tile_offsets[tile_id];
     int32_t range_end =
@@ -186,9 +178,9 @@ __global__ void compute_intermediate_derivatives_kernel(
             float dc_dG_local[CDIM]  = {0.f};
             float dc_opac_local[CDIM]  = {0.f};
             vec2 dG_dmean2d_local = {0.f, 0.f};
-            vec3 dG_dSigma_local = {0.f, 0.f, 0.f};
+            vec3 dG_dconic_local = {0.f, 0.f, 0.f};
             vec3 H_G_mean2d_local = {0.f, 0.f, 0.f};
-            float H_G_sigma_local[6] = {0.f};
+            float H_G_conic_local[6] = {0.f};
             float H_G_mixed_local[6] = {0.f};
 
             if (valid) {
@@ -214,51 +206,14 @@ __global__ void compute_intermediate_derivatives_kernel(
                 #pragma unroll
                 for (uint32_t k=0;k<CDIM;++k)
                     color_term[k] = rgbs_batch[t*CDIM+k] - Dk[k];
-                //T *= ra;
-                //const float fac = alpha * T;
-                /*
-                float v_alpha = 0.f;
-#pragma unroll
-                for (uint32_t k = 0; k < CDIM; ++k) {
-                    v_alpha += (rgbs_batch[t * CDIM + k] * T - buffer[k] * ra) * v_render_c[k];
-                }
-                v_alpha += T_final * ra * v_render_a;
-                if (backgrounds != nullptr) {
-                    float accum = 0.f;
-#pragma unroll
-                    for (uint32_t k = 0; k < CDIM; ++k) {
-                        accum += backgrounds[k] * v_render_c[k];
-                    }
-                    v_alpha += -T_final * ra * accum;
-                }
-                */
 
                 // --- Calculate this pixel's contribution to intermediate derivatives ---
-                dc_dcSH_local = alpha * T_before;
+                dc_dcSH_local = alpha * T_before; // value is the same for each channel from what I infer.
                 #pragma unroll
                 for (uint32_t k=0;k<CDIM;++k){
                     dc_dG_local  [k] = opac * T_before * color_term[k]; // eq.(2)
                     dc_opac_local[k] = GkT            * color_term[k];      // eq.(2)
                 }
-                /*
-                if (opac * vis <= 0.999f) {
-                    dc_dG_local = opac * v_alpha;
-                }
-                */
-               /*
-                const float Gk_T_prefix = vis*T;
-                float dc_dsigma_k[CDIM]; // sigma means opacity here, not conic
-                #pragma unroll
-                for (uint32_t k_chan = 0; k_chan < CDIM; ++k_chan) {
-                    float color_term = rgbs_batch[t*CDIM + k_chan] - buffer[k_chan];
-                    dc_dsigma_k[k_chan] = Gk_T_prefix* color_term;
-                }
-                dc_opac_local = 0.f;
-                #pragma unroll
-                for (uint32_t k_chan = 0; k_chan < CDIM; ++k_chan) {
-                    dc_opac_local += v_render_c[k_chan] * dc_dsigma_k[k_chan];
-                }
-                */
                 const vec2 v_grad = {conic.x * delta.x + conic.y * delta.y, conic.y * delta.x + conic.z * delta.y};
 
                 dG_dmean2d_local = {-vis * v_grad.x, -vis * v_grad.y};
@@ -268,19 +223,19 @@ __global__ void compute_intermediate_derivatives_kernel(
                     vis * (v_grad.y * v_grad.y - conic.z)
                 };
 
-                dG_dSigma_local = {
+                dG_dconic_local = {
                     -0.5f * vis * delta.x * delta.x,
                     -vis * delta.x * delta.y,
                     -0.5f * vis * delta.y * delta.y
                 };
 
                 const float dx2 = delta.x * delta.x, dy2 = delta.y * delta.y, dxdy = delta.x * delta.y;
-                H_G_sigma_local[0] = vis * 0.25f * dx2 * dx2;
-                H_G_sigma_local[1] = vis * 0.25f * dy2 * dy2;
-                H_G_sigma_local[2] = vis * 0.25f * dx2 * dy2;
-                H_G_sigma_local[3] = vis * 0.5f * dx2 * dxdy;
-                H_G_sigma_local[4] = vis * 0.5f * dy2 * dxdy;
-                H_G_sigma_local[5] = vis        * dx2 * dy2;
+                H_G_conic_local[0] = vis * 0.25f * dx2 * dx2;
+                H_G_conic_local[1] = vis * 0.25f * dy2 * dy2;
+                H_G_conic_local[2] = vis * 0.25f * dx2 * dy2;
+                H_G_conic_local[3] = vis * 0.5f * dx2 * dxdy;
+                H_G_conic_local[4] = vis * 0.5f * dy2 * dxdy;
+                H_G_conic_local[5] = vis        * dx2 * dy2;
 
                 H_G_mixed_local[0] = vis * (0.5f * dx2 * v_grad.x - delta.x);
                 H_G_mixed_local[1] = vis * (dxdy * v_grad.x - delta.y);
@@ -294,59 +249,153 @@ __global__ void compute_intermediate_derivatives_kernel(
                     buffer[k] += rgbs_batch[t * CDIM + k] * alpha * T_before;
                 }
                 T = T_before;
-            }
+
+                // getting correct dL/dc and H_L_dc
+                float dL_dc[CDIM], Hc_diag[CDIM];
+                #pragma unroll
+                for (uint32_t k = 0; k < CDIM; ++k) {
+                    dL_dc[k]  =  dL_dcIMG [pix_id*CDIM + k];
+                    Hc_diag[k] = H_L_dcIMG[pix_id*CDIM + k];
+                }
+
+                float dL_dcSH_local[CDIM];
+                float dL_dG_local = 0.0f, dL_opac_scalar = 0.0f;
+                #pragma unroll
+                for (uint32_t k = 0; k < CDIM; ++k) {
+                    dL_dcSH_local[k]  = dL_dc[k] * dc_dcSH_local;          // ∂L/∂c̃_k
+                    dL_dG_local      += dL_dc[k] * dc_dG_local[k];         // g_G
+                    dL_opac_scalar   += dL_dc[k] * dc_opac_local[k];       // ∂L/∂σ_k
+                }
+                float H_L_G_local = 0.0f;
+
+                #pragma unroll
+                for (uint32_t k = 0; k < CDIM; ++k) {
+                    H_L_G_local += Hc_diag[k] * dc_dG_local[k] * dc_dG_local[k];
+                } //  + 0  (c is linear in G ⇒ no “intrinsic’’ term)
+                // dL_dmean2d. dL_dconic
+                vec2 dL_dmean2d_local = {
+                    dL_dG_local * dG_dmean2d_local.x,
+                    dL_dG_local * dG_dmean2d_local.y };
+
+                }
+                vec3 dL_dconic_local = {
+                    dL_dG_local * dG_dconic_local.x,
+                    dL_dG_local * dG_dconic_local.y,
+                    dL_dG_local * dG_dconic_local.z };
+                // -- Hessian  Σμ  (xx,xy,yy) -
+                vec3 H_L_mean2d_local = {
+                    H_L_G_local * dG_dmean2d_local.x * dG_dmean2d_local.x +
+                        dL_dG_local * H_G_mean2d_local.x,                // xx
+                    H_L_G_local * dG_dmean2d_local.x * dG_dmean2d_local.y +
+                        dL_dG_local * H_G_mean2d_local.y,                // xy
+                    H_L_G_local * dG_dmean2d_local.y * dG_dmean2d_local.y +
+                        dL_dG_local * H_G_mean2d_local.z };              // yy
+
+                // -- Hessian  Σa  (A,A) (C,C) (A,C) (A,B) (B,C) (B,B) in that order --
+                float H_L_conic_local[6];
+                H_L_conic_local[0] = H_L_G_local * dG_dconic_local.x * dG_dconic_local.x +
+                                    dL_dG_local * H_G_conic_local[0];          // (A,A)
+                H_L_conic_local[1] = H_L_G_local * dG_dconic_local.z * dG_dconic_local.z +
+                                    dL_dG_local * H_G_conic_local[1];          // (C,C)
+                H_L_conic_local[2] = H_L_G_local * dG_dconic_local.x * dG_dconic_local.z +
+                                    dL_dG_local * H_G_conic_local[2];          // (A,C)
+                H_L_conic_local[3] = H_L_G_local * dG_dconic_local.x * dG_dconic_local.y +
+                                    dL_dG_local * H_G_conic_local[3];          // (A,B)
+                H_L_conic_local[4] = H_L_G_local * dG_dconic_local.y * dG_dconic_local.z +
+                                    dL_dG_local * H_G_conic_local[4];          // (B,C)
+                H_L_conic_local[5] = H_L_G_local * dG_dconic_local.y * dG_dconic_local.y +
+                                    dL_dG_local * H_G_conic_local[5];          // (B,B)
+
+                /* -- mixed Hessian  Σμa  (flattened in exactly your order) --------- */
+                float H_L_mixed_local[6];
+                H_L_mixed_local[0] = H_L_G_local * dG_dmean2d_local.x * dG_dconic_local.x +
+                                    dL_dG_local * H_G_mixed_local[0];          // μx–A
+                H_L_mixed_local[1] = H_L_G_local * dG_dmean2d_local.y * dG_dconic_local.x +
+                                    dL_dG_local * H_G_mixed_local[1];          // μy–A
+                H_L_mixed_local[2] = H_L_G_local * dG_dmean2d_local.x * dG_dconic_local.z +
+                                    dL_dG_local * H_G_mixed_local[2];          // μx–C
+                H_L_mixed_local[3] = H_L_G_local * dG_dmean2d_local.x * dG_dconic_local.y +
+                                    dL_dG_local * H_G_mixed_local[3];          // μx–B
+                H_L_mixed_local[4] = H_L_G_local * dG_dmean2d_local.y * dG_dconic_local.y +
+                                    dL_dG_local * H_G_mixed_local[4];          // μy–B
+                H_L_mixed_local[5] = H_L_G_local * dG_dmean2d_local.y * dG_dconic_local.z +
+                                    dL_dG_local * H_G_mixed_local[5];          // μy–C
+
+                float H_L_dcSH_local[CDIM];
+                #pragma unroll
+                for (uint32_t k = 0; k < CDIM; ++k) {
+                    H_L_dcSH_local[k] = Hc_diag[k] * dc_dcSH_local * dc_dcSH_local;
+                }
+                float H_L_dopac_local = 0.0f;          // sandwich part
+                float intrinsic_opac = 0.0f;          // ∑ dL/∂c · ∂²c/∂p²
+
+                #pragma unroll
+                for (uint32_t k = 0; k < CDIM; ++k) {
+                    H_L_opac_local += Hc_diag[k] * dc_opac_local[k] * dc_opac_local[k];
+                    // assumption is that d2c/dopac2 is 0
+                    //intrinsic_opac += dL_dc[k]  * (vis * vis * T_before * ra
+                    //                           * rgbs_batch[t*CDIM + k]);
+                }
+                //H_L_dopac_local += intrinsic_opac;     // full Hessian entry
 
             // --- Aggregate contributions within warp using warpSum ---
-            warpSum(dc_dcSH_local, warp);
-            warpSum(dG_dmean2d_local, warp);
-            warpSum(dG_dSigma_local, warp);
-            warpSum(H_G_mean2d_local, warp);
             #pragma unroll
-            for (int k = 0; k < 6; ++k) {
-                warpSum(H_G_sigma_local[k], warp);
-                warpSum(H_G_mixed_local[k], warp);
+            for (uint32_t k = 0; k < CDIM; ++k) {
+                warpSum(dL_dcSH_local[k], warp);
+            }
+
+            warpSum(dL_dG_local      , warp);
+            warpSum(dL_opac_scalar    , warp);
+            warpSum(dL_dmean2d_local  , warp);
+            warpSum(dL_dconic_local   , warp);
+            warpSum(H_L_mean2d_local  , warp);
+
+            #pragma unroll
+            for (int k=0;k<6;++k){
+                warpSum(H_L_conic_local [k], warp);
+                warpSum(H_L_mixed_local [k], warp);
             }
             #pragma unroll
-            for (uint32_t k=0;k<CDIM;++k){
-                warpSum(dc_dG_local  [k], warp);
-                warpSum(dc_opac_local[k], warp);
-            }
+            for (uint32_t k = 0; k < CDIM; ++k)
+                warpSum(H_L_dcSH_local[k], warp);
+            warpSum(H_L_dopac_local, warp);
 
             // --- Atomically add to global memory ---
             if (warp.thread_rank() == 0) {
                 int32_t g = id_batch[t];
-                gpuAtomicAdd(dc_dcSH + g, dc_dcSH_local);
-                float* dGptr   = dc_dG   + g*CDIM;
-                float* dOptr   = dc_opac + g*CDIM;
+
+                float* dCptr  = dL_dcSH  + g*CDIM;        // [N,CDIM]
                 #pragma unroll
-                for (uint32_t k=0;k<CDIM;++k){
-                    gpuAtomicAdd(dGptr + k, dc_dG_local  [k]);
-                    gpuAtomicAdd(dOptr + k, dc_opac_local[k]);
-                }
+                for (uint32_t k=0;k<CDIM;++k)
+                    gpuAtomicAdd(dCptr+k, dL_dcSH_local[k]);
+                gpuAtomicAdd(dL_dcSH + g, dc_dcSH_local);
+                gpuAtomicAdd(dL_dG       + g,  dL_dG_local);          // [N]
+                gpuAtomicAdd(&(dL_opac   [g]), dL_opac_scalar);       // [N]
 
-                gpuAtomicAdd(&(dG_dmean2d[g].x), dG_dmean2d_local.x);
-                gpuAtomicAdd(&(dG_dmean2d[g].y), dG_dmean2d_local.y);
-
-                gpuAtomicAdd(&(dG_dSigma[g].x), dG_dSigma_local.x);
-                gpuAtomicAdd(&(dG_dSigma[g].y), dG_dSigma_local.y);
-                gpuAtomicAdd(&(dG_dSigma[g].z), dG_dSigma_local.z);
-
-                gpuAtomicAdd(&(H_G_mean2d[g].x), H_G_mean2d_local.x);
-                gpuAtomicAdd(&(H_G_mean2d[g].y), H_G_mean2d_local.y);
-                gpuAtomicAdd(&(H_G_mean2d[g].z), H_G_mean2d_local.z);
-
-                float* H_G_sigma_ptr = H_G_sigma + 6 * g;
-                float* H_G_mixed_ptr = H_G_mixed + 6 * g;
+                gpuAtomicAdd(&(dL_dmean2d[g].x), dL_dmean2d_local.x); // [N,2]
+                gpuAtomicAdd(&(dL_dmean2d[g].y), dL_dmean2d_local.y);
+                gpuAtomicAdd(&(dL_dconic[g].x ), dL_dconic_local.x ); // [N,3]
+                gpuAtomicAdd(&(dL_dconic[g].y ), dL_dconic_local.y );
+                gpuAtomicAdd(&(dL_dconic[g].z ), dL_dconic_local.z );
+                // ---- second‑order ----------------------------------------------
+                gpuAtomicAdd(&(H_L_mean2d[g].x), H_L_mean2d_local.x); // [N,3]
+                gpuAtomicAdd(&(H_L_mean2d[g].y), H_L_mean2d_local.y);
+                gpuAtomicAdd(&(H_L_mean2d[g].z), H_L_mean2d_local.z);
+                float* HcshPtr = H_L_dcSH + g*CDIM;
+                #pragma unroll
+                for (uint32_t k = 0; k < CDIM; ++k)
+                    gpuAtomicAdd(HcshPtr + k, H_L_dcSH_local[k]);
+                gpuAtomicAdd(H_L_opac + g, H_L_opac_local);
+                float* HcPtr   = H_L_conic  + 6*g;                    // [N,6]
+                float* HmxPtr  = H_L_mixed  + 6*g;                    // [N,6]
                 #pragma unroll
                 for (int k=0;k<6;++k){
-                    gpuAtomicAdd(H_G_sigma_ptr+k, H_G_sigma_local[k]);
-                    gpuAtomicAdd(H_G_mixed_ptr+k, H_G_mixed_local[k]);
+                    gpuAtomicAdd(HcPtr +k, H_L_conic_local [k]);
+                    gpuAtomicAdd(HmxPtr+k, H_L_mixed_local[k]);
                 }
-            }
         }
     }
 }
-
 template <uint32_t CDIM>
 void launch_compute_intermediate_derivatives_kernel(
     const bool packed,
@@ -365,18 +414,20 @@ void launch_compute_intermediate_derivatives_kernel(
     // --- Forward Pass Outputs ---
     const at::Tensor render_alphas,
     const at::Tensor last_ids,
-    // --- Backward Pass Inputs (Output Gradients) ---
-    //const at::Tensor v_render_colors,
-    //const at::Tensor v_render_alphas,
-    // --- INTERMEDIATE OUTPUTS (per-Gaussian) ---
-    at::Tensor dc_dcSH,
-    at::Tensor dc_dG,
-    at::Tensor dG_dmean2d,
-    at::Tensor dG_dSigma,
-    at::Tensor H_G_mean2d,
-    at::Tensor H_G_sigma,
-    at::Tensor H_G_mixed,
-    at::Tensor dc_opac
+    // --- Loss Gradients (ADDED) ---
+    const at::Tensor dL_dcIMG,
+    const at::Tensor H_L_dcIMG,
+    // --- OUTPUTS (per-Gaussian) ---
+    at::Tensor dL_dcSH,
+    at::Tensor H_L_dcSH,  // Fixed name from H_L_cSH
+    at::Tensor dL_dG,
+    at::Tensor dL_dmean2d,
+    at::Tensor dL_dconic,
+    at::Tensor H_L_mean2d,
+    at::Tensor H_L_conic,   // Fixed name from H_L_sigma
+    at::Tensor H_L_mixed,
+    at::Tensor dL_dopac,
+    at::Tensor H_L_dopac    // ADDED
 ) {
     uint32_t C = tile_offsets.size(0);
     uint32_t N = means2d.size(0);
@@ -385,7 +436,7 @@ void launch_compute_intermediate_derivatives_kernel(
     uint32_t n_isects = flatten_ids.size(0);
 
     if (n_isects == 0) {
-        return; // No intersections, no work to do.
+        return;
     }
 
     dim3 threads = {tile_size, tile_size, 1};
@@ -423,18 +474,20 @@ void launch_compute_intermediate_derivatives_kernel(
             // --- Forward Pass Outputs ---
             render_alphas.data_ptr<float>(),
             last_ids.data_ptr<int32_t>(),
-            // --- Backward Pass Inputs (Output Gradients) ---
-            //v_render_colors.data_ptr<float>(),
-            //v_render_alphas.data_ptr<float>(),
-            // --- INTERMEDIATE OUTPUTS (per-Gaussian) ---
-            dc_dcSH.data_ptr<float>(),
-            dc_dG.data_ptr<float>(),
-            reinterpret_cast<vec2 *>(dG_dmean2d.data_ptr<float>()),
-            reinterpret_cast<vec3 *>(dG_dSigma.data_ptr<float>()),
-            reinterpret_cast<vec3 *>(H_G_mean2d.data_ptr<float>()),
-            H_G_sigma.data_ptr<float>(),
-            H_G_mixed.data_ptr<float>(),
-            dc_opac.data_ptr<float>()
+            // --- Loss Gradients (FIXED) ---
+            dL_dcIMG.data_ptr<float>(),
+            H_L_dcIMG.data_ptr<float>(),
+            // --- OUTPUTS (per-Gaussian) ---
+            dL_dcSH.data_ptr<float>(),
+            H_L_dcSH.data_ptr<float>(),  // Fixed
+            dL_dG.data_ptr<float>(),
+            reinterpret_cast<vec2 *>(dL_dmean2d.data_ptr<float>()),
+            reinterpret_cast<vec3 *>(dL_dconic.data_ptr<float>()),
+            reinterpret_cast<vec3 *>(H_L_mean2d.data_ptr<float>()),
+            H_L_conic.data_ptr<float>(),
+            H_L_mixed.data_ptr<float>(),
+            dL_dopac.data_ptr<float>(),
+            H_L_dopac.data_ptr<float>()  // Added
         );
 }
 
@@ -455,14 +508,17 @@ void launch_compute_intermediate_derivatives_kernel(
         const at::Tensor flatten_ids,                                                   \
         const at::Tensor render_alphas,                                                 \
         const at::Tensor last_ids,                                                      \
-        at::Tensor dc_dcSH,                                                             \
-        at::Tensor dc_dG,                                                               \
-        at::Tensor dG_dmean2d,                                                          \
-        at::Tensor dG_dSigma,                                                           \
-        at::Tensor H_G_mean2d,                                                          \
-        at::Tensor H_G_sigma,                                                           \
-        at::Tensor H_G_mixed,                                                           \
-        at::Tensor dc_opac);
+        const at::Tensor dL_dcIMG,                                                      \
+        const at::Tensor H_L_dcIMG,                                                     \
+        at::Tensor dL_dcSH,                                                             \
+        at::Tensor dL_dG,                                                               \
+        at::Tensor dL_dmean2d,                                                          \
+        at::Tensor dL_dconic,                                                           \
+        at::Tensor H_L_mean2d,                                                          \
+        at::Tensor H_L_conic,                                                           \
+        at::Tensor H_L_mixed,                                                           \
+        at::Tensor dL_opac,                                                             \
+        at::Tensor H_L_dopac);                                                          \
 
 __INS__(1)
 __INS__(2)

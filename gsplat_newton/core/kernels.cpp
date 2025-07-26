@@ -302,7 +302,7 @@ void chain_rule_sh_position(LocalNewtonContext &context,
 // ========================================================================
 
 std::tuple<at::Tensor, at::Tensor, at::Tensor, at::Tensor, at::Tensor,
-           at::Tensor, at::Tensor, at::Tensor>
+           at::Tensor, at::Tensor, at::Tensor, at::Tensor, at::Tensor>
 compute_intermediate_derivatives_bwd(
     // Gaussian parameters
     const at::Tensor means2d,
@@ -322,8 +322,8 @@ compute_intermediate_derivatives_bwd(
     const at::Tensor render_alphas,
     const at::Tensor last_ids,
     // gradients of outputs
-    //const at::Tensor v_render_colors,
-    //const at::Tensor v_render_alphas,
+    const at::Tensor dL_dcIMG,
+    const at::Tensor H_L_dcIMG,
     // output shapes
     const int64_t N
 ) {
@@ -336,6 +336,8 @@ compute_intermediate_derivatives_bwd(
     CHECK_INPUT(flatten_ids);
     CHECK_INPUT(render_alphas);
     CHECK_INPUT(last_ids);
+    CHECK_INPUT(dL_dcIMG);
+    CHECK_INPUT(H_L_dcIMG);
     //CHECK_INPUT(v_render_colors);
     //CHECK_INPUT(v_render_alphas);
     if (backgrounds.has_value()) {
@@ -349,14 +351,16 @@ compute_intermediate_derivatives_bwd(
     bool packed = means2d.dim() == 2;
 
     // Create output tensors
-    at::Tensor dc_dcSH = at::zeros({N,1}, means2d.options());
-    at::Tensor dc_dG = at::zeros({N,3}, means2d.options());
-    at::Tensor dG_dmean2d = at::zeros({N, 2}, means2d.options());
-    at::Tensor dG_dSigma = at::zeros({N, 3}, means2d.options());
-    at::Tensor H_G_mean2d = at::zeros({N, 3}, means2d.options());
-    at::Tensor H_G_sigma = at::zeros({N, 6}, means2d.options());
-    at::Tensor H_G_mixed = at::zeros({N, 6}, means2d.options());
-    at::Tensor v_opac = at::zeros({N, 3}, means2d.options());
+    at::Tensor dL_dcSH = at::zeros({N,3}, means2d.options());
+    at::Tensor H_L_dcSH = at::zeros({N,3}, means2d.options());
+    at::Tensor dL_dG = at::zeros({N,3}, means2d.options());
+    at::Tensor dL_dmean2d = at::zeros({N, 2}, means2d.options());
+    at::Tensor dL_dconic = at::zeros({N, 3}, means2d.options());
+    at::Tensor H_L_mean2d = at::zeros({N, 3}, means2d.options());
+    at::Tensor H_L_conic = at::zeros({N, 6}, means2d.options());
+    at::Tensor H_L_mixed = at::zeros({N, 6}, means2d.options());
+    at::Tensor dL_dopac = at::zeros({N}, means2d.options());
+    at::Tensor H_L_dopac = at::zeros({N}, means2d.options());
 
 #define __LAUNCH_KERNEL__(CHANNELS) \
     case CHANNELS: \
@@ -375,14 +379,16 @@ compute_intermediate_derivatives_bwd(
             flatten_ids, \
             render_alphas, \
             last_ids, \
-            dc_dcSH, \
-            dc_dG, \
-            dG_dmean2d, \
-            dG_dSigma, \
-            H_G_mean2d, \
-            H_G_sigma, \
-            H_G_mixed, \
-            v_opac \
+            dL_dcSH, \
+            H_L_dcSH, \
+            dL_dG, \
+            dL_dmean2d, \
+            dL_dconic, \
+            H_L_mean2d, \
+            H_L_conic, \
+            H_L_mixed, \
+            dL_dopac, \
+            H_L_dopac \
         ); \
         break;
 
@@ -412,8 +418,8 @@ compute_intermediate_derivatives_bwd(
 #undef __LAUNCH_KERNEL__
 
     return std::make_tuple(
-        dc_dcSH, dc_dG, dG_dmean2d, dG_dSigma,
-        H_G_mean2d, H_G_sigma, H_G_mixed, v_opac
+        dL_dcSH, H_L_dcSH, dL_dG, dL_dmean2d, dL_dconic,
+        H_L_mean2d, H_L_conic, H_L_mixed, dL_dopac, H_L_dopac
     );
 }
 
@@ -423,18 +429,17 @@ compute_intermediate_derivatives_bwd(
 
 
 // Wrapper function to call all split kernels
-std::tuple<at::Tensor, at::Tensor, at::Tensor,
-    at::Tensor, at::Tensor, at::Tensor, at::Tensor,
-    at::Tensor, at::Tensor, at::Tensor>
-assemble_newton_derivatives_split(
+std::tuple<at::Tensor, at::Tensor, at::Tensor,  at::Tensor,
+           at::Tensor, at::Tensor, at::Tensor, at::Tensor>
+assemble_derivatives_split(
     // Intermediate derivatives
-    const at::Tensor dc_dcSH_totals,
-    const at::Tensor dc_dG_totals,
-    const at::Tensor dG_dmean2d_totals,
-    const at::Tensor dG_dSigma_totals,
-    const at::Tensor H_G_mean2d_totals,
-    const at::Tensor H_G_sigma_totals,
-    const at::Tensor H_G_mixed_totals,
+    const at::Tensor dL_dcSH_totals,
+    const at::Tensor dL_dG_totals,
+    const at::Tensor dL_dmean2d_totals,
+    const at::Tensor dL_dconic_totals,
+    const at::Tensor H_L_mean2d_totals,
+    const at::Tensor H_L_conic_totals,
+    const at::Tensor H_L_mixedinv_totals,
     // Projection derivatives
     const at::Tensor jacobians,
     const at::Tensor viewmat,
@@ -444,15 +449,14 @@ assemble_newton_derivatives_split(
     const at::Tensor H_c_sh_p,
     const at::Tensor H_Sigma_dp,
     const at::Tensor dSigma_dtheta_inputs,
-    const at::Tensor d2Sigma_dtheta2_inputs,
+    const at::Tensor H_Sigma_dtheta_inputs,
     const at::Tensor quats,
     const at::Tensor conics_2d,
     const at::Tensor p_k,
     const at::Tensor camera_pos,
-    const at::Tensor dc_dopac,
-    const at::Tensor dcRAST_dck,
-    const at::Tensor dL_dc,
-    const at::Tensor H_L_dc
+    const at::Tensor dL_dck,
+//    const at::Tensor dL_dc,
+//    const at::Tensor H_L_dc
 ) {
     const int num_gaussians = p_k.size(0);
     const int num_coeffs = dcRAST_dck.size(-2);
@@ -465,85 +469,47 @@ assemble_newton_derivatives_split(
     auto H_L_dlambda = torch::empty({num_gaussians, 2, 2}, options);
     auto dL_dtheta = torch::empty({num_gaussians}, options);
     auto H_L_dtheta = torch::empty({num_gaussians}, options);
-    auto dL_dopac = torch::empty({num_gaussians},options);
-    auto H_L_dopac = torch::empty({num_gaussians},options);
     auto dL_dcolor = torch::empty({num_gaussians, num_coeffs, 3}, options);
     auto H_L_dcolor = torch::empty({num_gaussians, num_coeffs, 3}, options);
+    auto dL_dSigma = torch::empty({num_gaussians,  3}, options);
+    auto H_L_sigma = torch::empty({num_gaussians, 6}, options);
+    auto H_L_mixed = torch::empty({num_gaussians, 6}, options);
     // Launch split kernels
-        launch_compute_position_derivatives_kernel(
+        launch_assemble_derivatives_kernels(
             num_gaussians,
-            dc_dcSH_totals,
-            dc_dG_totals,
-            dG_dmean2d_totals,
-            dG_dSigma_totals,
-            H_G_mean2d_totals,
-            H_G_sigma_totals,
-            H_G_mixed_totals,
+            conics_2d,
+            camera_pos,
+            viewmat,
+            quats,
+            dL_dcSH_totals,
+            dL_dG_totals,
+            dL_dmean2d_totals,
+            dL_dconic_totals,
+            H_L_mean2d_totals,
+            H_L_conic_totals,
+            H_L_mixedinv_totals,
             jacobians,
             dSigma_dp,
             dc_sh_dp,
             H_mean2d_dp,
-            H_c_sh_p,
             H_Sigma_dp,
-            conics_2d,
             p_k,
-            dL_dc,
-            H_L_dc,
-            camera_pos,
-            dL_dvk,
-            H_L_dvk
-        );
-
-        launch_compute_scale_derivatives_kernel(
-            num_gaussians,
-            dc_dG_totals,
-            dG_dSigma_totals,
-            H_G_sigma_totals,
-            jacobians,
-            viewmat,
-            quats,
-            conics_2d,
-            dL_dc,
-            H_L_dc,
-            dL_dlambda,
-            H_L_dlambda
-        );
-
-        launch_compute_rotation_derivatives_kernel(
-            num_gaussians,
-            dc_dG_totals,
-            dG_dSigma_totals,
-            H_G_sigma_totals,
             dSigma_dtheta_inputs,
-            d2Sigma_dtheta2_inputs,
-            conics_2d,
-            dL_dc,
-            H_L_dc,
+            H_Sigma_dtheta_inputs,
+            dL_dvk,
+            H_L_dvk,
+            dL_dlambda,
+            H_L_dlambda,
             dL_dtheta,
-            H_L_dtheta
-        );
-        launch_compute_opacity_derivatives_kernel(
-            num_gaussians,
-            dc_dopac,
-            dL_dc,
-            H_L_dc,
-            dL_dopac,
-            H_L_dopac
-        );
-        launch_compute_color_derivatives_kernel(
-            num_gaussians,
-            num_coeffs,
-            dc_dcSH_totals,
-            dL_dc,
-            H_L_dc,
             dL_dcolor,
-            H_L_dcolor
+            H_L_dcolor,
+            dL_dSigma,
+            H_L_sigma,
+            H_L_mixed
         );
-
 
     return std::make_tuple(dL_dvk, H_L_dvk, dL_dlambda, H_L_dlambda,
                           dL_dtheta, H_L_dtheta,
-                          dL_dopac, H_L_dopac,
                           dL_dcolor, H_L_dcolor);
 }
 

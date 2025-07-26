@@ -71,14 +71,17 @@ void local_newton_backward(
     auto& dSigma_dtheta = std::get<0>(dtheta_out);
     auto& H_Sigma_dtheta = std::get<1>(dtheta_out);
 
-    auto& dc_dcSH_totals = std::get<0>(intermediate_derivs);
-    auto& dc_dG_totals = std::get<1>(intermediate_derivs);
-    auto& dG_dmean2d_totals = std::get<2>(intermediate_derivs);
-    auto& dG_dSigma_totals = std::get<3>(intermediate_derivs);
-    auto& H_G_mean2d_totals = std::get<4>(intermediate_derivs);
-    auto& H_G_sigma_totals = std::get<5>(intermediate_derivs);
-    auto& H_G_mixed_totals = std::get<6>(intermediate_derivs);
-    auto& dc_dopac = std::get<7>(intermediate_derivs);
+    auto& dL_dcSH_totals = std::get<0>(intermediate_derivs);
+    auto& H_L_dcSH_totals = std::get<1>(intermediate_derivs);
+    auto& dL_dG_totals = std::get<2>(intermediate_derivs);
+    auto& dL_dmean2d_totals = std::get<3>(intermediate_derivs);
+    auto& dL_dconic_totals = std::get<4>(intermediate_derivs);
+    auto& H_L_mean2d_totals = std::get<5>(intermediate_derivs);
+    auto& H_L_conic_totals = std::get<6>(intermediate_derivs);
+    auto& H_L_mixedinv_totals = std::get<7>(intermediate_derivs);
+
+    context.dL_d_opacity = std::get<8>(intermediate_derivs);
+    context.H_L_opacity = std::get<9>(intermediate_derivs);
 
     // --- Stage 2: "Backward pass" for Spherical Harmonics
     //
@@ -86,42 +89,41 @@ void local_newton_backward(
         context.sh_degree,
         context.view_dirs,
         context.coeffs,
-        dc_dcSH_totals
+        dL_dcSH_totals
     );
-    auto& dcRAST_dck = std::get<0>(sh_outputs);
-    auto& dcRAST_dr = std::get<1>(sh_outputs);
-    auto& H_cRAST_r = std::get<2>(sh_outputs);
+    auto& dL_dcolor = std::get<0>(sh_outputs);
+    auto& H_L_dcolor = std::get<1>(sh_outputs);
+    auto& dLcolor_dr = std::get<2>(sh_outputs);
+    auto& H_Lcolor_r = std::get<3>(sh_outputs);
 
     auto chained_outputs = chain_rule_color_position(
         means,
         context.campos, //camera_pos ??????
-        dcRAST_dr,
-        H_cRAST_r
+        dLcolor_dr,
+        H_Lcolor_r
     );
-    auto& d_cSH_dp = std::get<0>(chained_outputs);
-    auto& H_cSH_dp = std::get<1>(chained_outputs);
+    auto& dLcolor_dp = std::get<0>(chained_outputs);
+    auto& H_Lcolor_dp = std::get<1>(chained_outputs);
     // --- Stage 2: Assemble Local Newton Systems ---
     // this one does formulas for position, scale and rotation
     // opacity is calculated in bwd of rasterization
     // color is calculated in spherical harmonics LN (dcRAST_dck)
     //
     // Combines projection derivatives (from context) and rasterization derivatives (from above).
-    auto newton_systems = assemble_newton_derivatives_split(
+    auto newton_systems = assemble_derivatives_split(
         // Inputs from intermediate derivatives
-        dc_dcSH_totals,
-        dc_dG_totals,
-        dG_dmean2d_totals,
-        dG_dSigma_totals,
-        H_G_mean2d_totals,
-        H_G_sigma_totals,
-        H_G_mixed_totals,
+        dL_dcSH_totals,
+        dL_dG_totals,
+        dL_dmean2d_totals,
+        dL_dconic_totals,
+        H_L_mean2d_totals,
+        H_L_conic_totals,
+        H_L_mixedinv_totals,
         // Projection derivatives from context
         context.d_mean2d_dp, // jacobians
         context.viewmat,
         context.d_Sigma_dp, // ∂Σ/∂p  [N,3,3]
-        d_cSH_dp, // dc_sh_dp
         context.H_mean2d_dp, // ∂²π/∂p² [N,2,3,3]
-        H_cSH_dp, // H_c_sh_p
         context.H_Sigma_dp, // ∂²Σ/∂p² [N,3,3]
         dSigma_dtheta,
         H_Sigma_dtheta,
@@ -129,10 +131,7 @@ void local_newton_backward(
         context.conics,
         means, // p_k
         context.campos,// camera_pos
-        dc_dopac,
-        dcRAST_dck,
-        context.dL_d_color_img,
-        context.H_L_color_img
+        dL_dcolor,
     );
 
     context.dL_d_pos      = std::get<0>(newton_systems);
@@ -141,10 +140,8 @@ void local_newton_backward(
     context.H_L_scale     = std::get<3>(newton_systems);
     context.dL_d_rot      = std::get<4>(newton_systems);
     context.H_L_rot       = std::get<5>(newton_systems);
-    context.dL_d_opacity  = std::get<6>(newton_systems);
-    context.H_L_opacity   = std::get<7>(newton_systems);
-    context.dL_d_color    = std::get<8>(newton_systems);
-    context.H_L_color     = std::get<9>(newton_systems);
+    context.dL_d_color    = std::get<6>(newton_systems);
+    context.H_L_color     = std::get<7>(newton_systems);
 
     // We will need to compute color derivatives separately or assume they are part of another tensor.
     // For now, creating placeholder tensors for color update.
