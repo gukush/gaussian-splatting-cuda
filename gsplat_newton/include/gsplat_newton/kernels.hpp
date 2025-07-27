@@ -319,11 +319,12 @@ void launch_spherical_harmonics_LN_kernel(
     const uint32_t      degrees_to_use,
     const at::Tensor   dirs,       // [..., 3]
     const at::Tensor   coeffs,     // [..., K, 3]
-    const at::Tensor   v_colors,   // dc_RAST / dc_SH
+    const at::Tensor   v_colors,   // dL / dc_SH
     //outputs
     at::Tensor         v_coeffs,   // dc_RAST / dc_attribute
-    at::Tensor         v_dir,      // [..., 3]     (dc_RAST / dr)
-    at::Tensor         H_dir       // [..., 6]     (d2c_RAST / dr2)
+    at::Tensor         H_coeffs,   // d2c_RAST / dc_attribute^2 (diagonal terms only)
+    at::Tensor         v_dir,      // [..., 3]     (dL / dr)
+    at::Tensor         H_dir       // [..., 6]     (d2L / dr2)
 );
 
 void launch_chain_rule_color_position_kernel(

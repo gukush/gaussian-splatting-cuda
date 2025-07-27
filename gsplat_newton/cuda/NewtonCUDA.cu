@@ -97,7 +97,9 @@ __global__ void solve_updates_and_backproject_kernel_impl(
     // ---------------------------------------------------------------------
     mat2  H_pos = glm::make_mat2(H_L_pos  + gid * 4);
     vec2  g_pos = glm::make_vec2(dL_d_pos + gid * 2);
-    vec2  delta_vk = -glm::inverse(H_pos + mat2(kMatInvEps)) * g_pos;
+    H_pos[0][0] += kMatInvEps;
+    H_pos[1][1] += kMatInvEps;
+    vec2  delta_vk = -glm::inverse(H_pos) * g_pos;
 
     mat2x3 U_k  = glm::make_mat2x3(U_k_bases + gid * 6);
     mat3x2 U_k_T = glm::transpose(U_k);
@@ -112,14 +114,19 @@ __global__ void solve_updates_and_backproject_kernel_impl(
     // ---------------------------------------------------------------------
     mat2  H_scale = glm::make_mat2(H_L_scale  + gid * 4);
     vec2  g_scale = glm::make_vec2(dL_d_scale + gid * 2);
-    vec2  delta_lambda = -glm::inverse(H_scale + mat2(kMatInvEps)) * g_scale;
+    H_scale[0][0] += kMatInvEps;
+    H_scale[1][1] += kMatInvEps;
+    vec2  delta_lambda = -glm::inverse(H_scale) * g_scale;
 
     mat2x3 T_k   = glm::make_mat2x3(T_k_matrices + gid * 6);
     mat3x2 T_k_T = glm::transpose(T_k);
 
     // (3×2)*(2×3) manual
     mat3 TtT = mul_mat3x2_mat2x3(T_k_T, T_k);
-    mat3 TtT_inv = glm::inverse(TtT + mat3(kMatInvEps));
+    TtT[0][0] += kMatInvEps;
+    TtT[1][1] += kMatInvEps;
+    TtT[2][2] += kMatInvEps;
+    mat3 TtT_inv = glm::inverse(TtT);
 
     vec3 temp_vec = mul_mat3x2_vec2(T_k_T, delta_lambda);
     vec3 delta_s  = mul_mat3_vec3(TtT_inv, temp_vec);

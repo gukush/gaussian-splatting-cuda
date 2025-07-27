@@ -173,7 +173,7 @@ std::tuple<at::Tensor, at::Tensor> compute_covariance_derivatives(
 // ========================================================================
 
 
-std::tuple<at::Tensor, at::Tensor, at::Tensor> spherical_harmonics_LN(
+std::tuple<at::Tensor, at::Tensor, at::Tensor, at::Tensor> spherical_harmonics_LN(
     const uint32_t      degrees_to_use,
     const at::Tensor   dirs,       // [..., 3]
     const at::Tensor   coeffs,     // [..., K, 3]
@@ -210,6 +210,7 @@ std::tuple<at::Tensor, at::Tensor, at::Tensor> spherical_harmonics_LN(
     const uint32_t K = coeffs.size(-2);
     const uint32_t N = dirs.numel() / 3;
     auto v_coeffs = at::empty({(int64_t)N, (int64_t)K, 3}, dirs.options());
+    auto H_coeffs = at::empty({(int64_t)N, (int64_t)K, 3}, dirs.options());
     //auto v_dir    = at::empty({(int64_t)N,          3}, dirs.options());
     //auto H_dir    = at::empty({(int64_t)N,          6}, dirs.options());
 
@@ -219,11 +220,12 @@ std::tuple<at::Tensor, at::Tensor, at::Tensor> spherical_harmonics_LN(
         coeffs,
         v_colors,
         v_coeffs,
+        H_coeffs,
         d_color_d_dir,
         H_color_d_dir
     );
 
-    return std::make_tuple(v_coeffs,d_color_d_dir,H_color_d_dir);
+    return std::make_tuple(v_coeffs,H_coeffs,d_color_d_dir,H_color_d_dir);
 }
 
 
