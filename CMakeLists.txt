@@ -377,6 +377,7 @@ if(BUILD_TESTS)
             ${CMAKE_CURRENT_SOURCE_DIR}/include
             ${CMAKE_CURRENT_BINARY_DIR}/include  # For generated config.h
             ${CMAKE_CURRENT_SOURCE_DIR}/gsplat
+            ${CMAKE_CURRENT_SOURCE_DIR}/gsplat_newton
             ${CMAKE_CURRENT_SOURCE_DIR}/tests
             ${Python3_INCLUDE_DIRS}
             ${CUDAToolkit_INCLUDE_DIRS}
@@ -387,6 +388,7 @@ if(BUILD_TESTS)
             gaussian_host
             gaussian_kernels
             gsplat_backend
+            gsplat_newton_backend
             GTest::gtest
             GTest::gtest_main
             Python3::Python
