@@ -129,7 +129,6 @@ namespace gs {
 
         auto dL_c = dL_ssim + dL_mse;
         auto H_L_c = H_ssim + H_mse;
-
         return {loss, dL_c, H_L_c};
     }
 
@@ -284,15 +283,18 @@ namespace gs {
         */
         // --- Stage 3: Solve Systems, Backproject, and Apply Updates ---
         if (iter % 100 == 0) {
-            std::cout << "running solve for updates";
+            std::cout << "running solve for updates" <<std::endl;
         }
+        //auto means_before = strategy_->get_model().get_means().clone();
         gsplat_newton::solve_and_update(
             ctx,
             strategy_->get_model(),
             static_cast<int>(cam->image_width()),
             static_cast<int>(cam->image_height())
         );
-
+        //auto means_after = strategy_->get_model().get_means();
+        //auto update_norm = (means_after - means_before).norm().item<float>();
+        //std::cout << "Newton update norm: " << update_norm << std::endl;
         {
             torch::NoGradGuard no_grad;
 

@@ -256,7 +256,7 @@ if (!viewmat.defined()) {
 
     // Apply standard color transformation for rendering
     colors = torch::clamp_min(colors + 0.5f, 0.0f);
-
+    //context->colors = colors; Already done in sphericalharmonicsforward
 
     // Handle different render modes
     torch::Tensor render_colors;

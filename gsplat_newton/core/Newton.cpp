@@ -85,6 +85,14 @@ void local_newton_backward(
     context.dL_d_opacity = std::get<8>(intermediate_derivs);
     context.H_L_opacity = std::get<9>(intermediate_derivs);
 
+    std::cout << "dL_dcSH_totals NaN: " << torch::isnan(dL_dcSH_totals).any().item<bool>() << std::endl;
+    std::cout << "dL_dmean2d_totals NaN: " << torch::isnan(dL_dmean2d_totals).any().item<bool>() << std::endl;
+    std::cout << "dL_dconic_totals NaN: " << torch::isnan(dL_dconic_totals).any().item<bool>() << std::endl;
+
+    if (torch::isnan(dL_dcSH_totals).any().item<bool>()) {
+        std::cout << "ERROR: NaN detected in intermediate derivatives!" << std::endl;
+        return; // Early exit to prevent further propagation
+    }
     // --- Stage 2: "Backward pass" for Spherical Harmonics
     //
     auto sh_outputs = spherical_harmonics_LN(
@@ -112,6 +120,26 @@ void local_newton_backward(
     // color is calculated in spherical harmonics LN (dcRAST_dck)
     //
     // Combines projection derivatives (from context) and rasterization derivatives (from above).
+        // DEBUG: Check inputs to assembly
+    std::cout << "=== Before Assembly ===" << std::endl;
+    std::cout << "jacobians NaN: " << torch::isnan(context.d_mean2d_dp).any().item<bool>() << std::endl;
+    std::cout << "d_Sigma_dp NaN: " << torch::isnan(context.d_Sigma_dp).any().item<bool>() << std::endl;
+    std::cout << "H_mean2d_dp NaN: " << torch::isnan(context.H_mean2d_dp).any().item<bool>() << std::endl;
+    std::cout << "H_Sigma_dp NaN: " << torch::isnan(context.H_Sigma_dp).any().item<bool>() << std::endl;
+
+    // Check magnitudes
+    std::cout << "jacobians norm: " << context.d_mean2d_dp.norm().item<float>() << std::endl;
+    std::cout << "d_Sigma_dp norm: " << context.d_Sigma_dp.norm().item<float>() << std::endl;
+    std::cout << "H_mean2d_dp norm: " << context.H_mean2d_dp.norm().item<float>() << std::endl;
+    std::cout << "H_Sigma_dp norm: " << context.H_Sigma_dp.norm().item<float>() << std::endl;
+
+    // Check intermediate inputs
+    std::cout << "dL_dmean2d_totals norm: " << dL_dmean2d_totals.norm().item<float>() << std::endl;
+    std::cout << "dL_dconic_totals norm: " << dL_dconic_totals.norm().item<float>() << std::endl;
+    std::cout << "H_L_mean2d_totals norm: " << H_L_mean2d_totals.norm().item<float>() << std::endl;
+    std::cout << "H_L_conic_totals norm: " << H_L_conic_totals.norm().item<float>() << std::endl;
+
+
     auto newton_systems = assemble_derivatives_split(
         // Inputs from intermediate derivatives
         dL_dcSH_totals,
@@ -137,6 +165,15 @@ void local_newton_backward(
         context.campos,// camera_pos
         context.dL_d_color
     );
+        // DEBUG: Check outputs from assembly
+    std::cout << "=== After Assembly ===" << std::endl;
+    auto& dL_d_pos_result = std::get<0>(newton_systems);
+    auto& H_L_pos_result = std::get<1>(newton_systems);
+
+    std::cout << "dL_d_pos_result NaN: " << torch::isnan(dL_d_pos_result).any().item<bool>() << std::endl;
+    std::cout << "H_L_pos_result NaN: " << torch::isnan(H_L_pos_result).any().item<bool>() << std::endl;
+    std::cout << "dL_d_pos_result norm: " << dL_d_pos_result.norm().item<float>() << std::endl;
+    std::cout << "H_L_pos_result norm: " << H_L_pos_result.norm().item<float>() << std::endl;
 
     context.dL_d_pos      = std::get<0>(newton_systems);
     context.H_L_pos       = std::get<1>(newton_systems);
@@ -206,6 +243,15 @@ void solve_and_update(
     CHECK_INPUT(T_matrices);
     CHECK_INPUT(view_dirs);
 
+    // Check for singular matrices
+    auto H_pos_det = H_L_pos.det();
+    auto min_det = H_pos_det.min().item<float>();
+    auto max_det = H_pos_det.max().item<float>();
+    std::cout << "H_L_pos det range: [" << min_det << ", " << max_det << "]" << std::endl;
+
+    if (min_det < 1e-10f) {
+        std::cout << "WARNING: Nearly singular Hessian detected!" << std::endl;
+    }
     launch_solve_and_update_all_attributes_kernel(
         dL_d_pos, H_L_pos,
         dL_d_scale, H_L_scale,
