@@ -11,7 +11,7 @@
 using namespace gsplat;
 
 namespace gsplat_newton {
-
+// TODO: add CDIM as template parameter
 template <typename scalar_t>
 __global__ void spherical_harmonics_LN_kernel(
     const uint32_t N,
@@ -22,9 +22,9 @@ __global__ void spherical_harmonics_LN_kernel(
     const scalar_t *__restrict__ dL_dcSH,  // [N, 1] because value is the same for each channel
     // outputs
     scalar_t       *__restrict__ out_v_coeffs, // [N, K, 3]
-    scalar_t       *__restrict__ out_H_coeffs,
-    vec3           *__restrict__ out_v_dir,    // [N, 3]
-    scalar_t       *__restrict__ out_H_dir     // [N, 6]
+    scalar_t       *__restrict__ out_H_coeffs, // [N, K ,3]
+    vec3           *__restrict__ out_v_dir,    // [N, CDIM, 3]
+    scalar_t       *__restrict__ out_H_dir     // [N, CDIM, 6]
 ) {
     uint32_t total_idx = cg::this_grid().thread_rank();
     uint32_t sample_idx = total_idx / 3;  // Which sample (0 to N-1)
@@ -32,24 +32,25 @@ __global__ void spherical_harmonics_LN_kernel(
 
     if (sample_idx >= N) return;
 
-    // Create a cooperative group of 3 threads processing the same sample
-    auto tile = cg::tiled_partition<3>(cg::this_thread_block());
+    // Create a cooperative group of 4 threads processing the same sample (only 3 do the work)
+    auto tile = cg::tiled_partition<4>(cg::this_thread_block());
+    bool active = (tile.thread_rank() < 3);
 
     // Get inputs for this sample and channel
     const vec3 dir = dirs[sample_idx];
     const scalar_t* coeffs_ptr = coeffs + sample_idx * K * 3;
-    const scalar_t* vc_ptr = dL_dcSH + sample_idx;
+    const scalar_t* vc_ptr = dL_dcSH + sample_idx * 3;
     scalar_t* vc_out_ptr = out_v_coeffs + sample_idx * K * 3;
     scalar_t* hc_out_ptr = out_H_coeffs ? out_H_coeffs + sample_idx * K * 3 : nullptr;
     vec3* vd_ptr = out_v_dir ? &out_v_dir[sample_idx] : nullptr;
     scalar_t* h_ptr = out_H_dir ? out_H_dir + sample_idx * 6 : nullptr;
 
-    float v_colors_local = vc_ptr[0];  // Same for all channels
+    float v_colors_local = vc_ptr[channel];  // Same for all channels
 
     // Local accumulators for Hessian and gradient
     float local_H_dir[6] = {0.f, 0.f, 0.f, 0.f, 0.f, 0.f};
     vec3 local_v_dir = vec3(0.f, 0.f, 0.f);
-
+    if (active) {
     // Assume output tensors are pre-initialized to zeros
 
     float inorm = rsqrtf(dir.x * dir.x + dir.y * dir.y + dir.z * dir.z);
@@ -273,7 +274,7 @@ __global__ void spherical_harmonics_LN_kernel(
         local_v_dir.y += v_d.y;
         local_v_dir.z += v_d.z;
     }
-
+    }
     // Reduce across the 3 channels using warp reduction
     if (vd_ptr != nullptr) {
         warpSum(local_v_dir, tile);
@@ -315,7 +316,7 @@ void launch_spherical_harmonics_LN_kernel(
     if (N == 0) return;
 
     const int threads = 256;
-    const int total_work = N * 3;  // N samples × 3 channels
+    const int total_work = N * 4;  // N samples × 3 channels (4 tiles)
     const int blocks = (total_work + threads - 1) / threads;
 
     AT_DISPATCH_FLOATING_TYPES(dirs.scalar_type(), "spherical_harmonics_LN_kernel", [&] {

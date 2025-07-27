@@ -19,7 +19,7 @@ set(GSN_SOURCES
     cuda/rasterization_kernels.cu
     cuda/sh_kernels.cu
     # cuda/sh_kernels_old.cu
-    cuda/update_kernels.cu
+    #cuda/update_kernels.cu
 )
 
 # Create a static library named gsplat_newton_backend

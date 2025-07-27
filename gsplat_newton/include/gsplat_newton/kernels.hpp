@@ -129,7 +129,7 @@ torch::Tensor sh_fwd_with_derivatives(
  */
 void chain_rule_sh_position(LocalNewtonContext& context);
 
-std::tuple<at::Tensor, at::Tensor, at::Tensor> spherical_harmonics_LN(
+std::tuple<at::Tensor, at::Tensor, at::Tensor,  at::Tensor> spherical_harmonics_LN(
     const uint32_t      degrees_to_use,
     const at::Tensor   dirs,       // [..., 3]
     const at::Tensor   coeffs,     // [..., K, 3]
@@ -240,9 +240,9 @@ compute_intermediate_derivatives_bwd(
 // ========================================================================
 // 4. ASSEMBLY & UPDATE KERNELS
 // ========================================================================
-
 std::tuple<at::Tensor, at::Tensor, at::Tensor,  at::Tensor,
-           at::Tensor, at::Tensor, at::Tensor, at::Tensor>
+           at::Tensor, at::Tensor, at::Tensor, at::Tensor,
+           at::Tensor>
 assemble_derivatives_split(
     // Intermediate derivatives
     const at::Tensor dL_dcSH_totals,
@@ -258,6 +258,7 @@ assemble_derivatives_split(
     const at::Tensor dSigma_dp,
     const at::Tensor dc_sh_dp,
     const at::Tensor H_mean2d_dp,
+    const at::Tensor H_c_sh_p,
     const at::Tensor H_Sigma_dp,
     const at::Tensor dSigma_dtheta_inputs,
     const at::Tensor H_Sigma_dtheta_inputs,
@@ -265,7 +266,7 @@ assemble_derivatives_split(
     const at::Tensor conics_2d,
     const at::Tensor p_k,
     const at::Tensor camera_pos,
-    const at::Tensor dL_dck,
+    const at::Tensor dL_dck
 //    const at::Tensor dL_dc,
 //    const at::Tensor H_L_dc
 );
@@ -354,7 +355,6 @@ void launch_assemble_derivatives_kernels(
     const at::Tensor jacobians,
     const at::Tensor dSigma_dp,
     const at::Tensor H_mean2d_dp,
-    const at::Tensor H_cSH_p,
     const at::Tensor H_Sigma_dp,
     const at::Tensor p_k,
     const at::Tensor dSigma_dtheta,
@@ -363,7 +363,7 @@ void launch_assemble_derivatives_kernels(
     at::Tensor d_L_vk, // [N, 2]
     at::Tensor H_L_vk, // // [N, 3]
     at::Tensor dL_dlambda,  // [N]
-    at::Tensor H_L_dlambda   // [N]
+    at::Tensor H_L_dlambda,   // [N]
     at::Tensor dL_dtheta, // [N]
     at::Tensor d2L_dtheta2, // [N]
     at::Tensor dL_dcoeffs,  // Output: ∂L / ∂c_k as a vec3 [N, num_sh_coeffs]
@@ -372,10 +372,11 @@ void launch_assemble_derivatives_kernels(
     // temporary outputs
     at::Tensor dL_dSigma,
     at::Tensor H_L_sigma,
-    at::Tensor H_L_mixed
+    at::Tensor H_L_mixed,
+    at::Tensor T_matrices
 );
 
-
+/*
 template <uint32_t CDIM>
 void launch_accumulate_y_2nd_order_kernel(
     const uint32_t C,
@@ -416,22 +417,6 @@ void accumulate_y_2nd_order(
     at::Tensor hess_y
 );
 
-/*
-template<typename scalar_t>
-__global__ void
-compute_y_updates_kernel(
-    const uint32_t n_isects,
-    // from the first pass:
-    const scalar_t* __restrict__ grad_y,   // [n_isects, 2]
-    const scalar_t* __restrict__ hess_y,   // [n_isects, 3]
-    // optional regularizer:
-    const bool      do_reg,                // whether to add 2·λ to Hessian & λ·y to grad
-    const scalar_t  lambda,                // your λ
-    const vec2*     __restrict__ yk,       // the current y_k values, [n_isects]
-    // outputs:
-    vec2*           __restrict__ delta_y   // [n_isects]
-);
-*/
 
 void launch_compute_y_updates_kernel(
     const uint32_t n_isects,
@@ -442,7 +427,7 @@ void launch_compute_y_updates_kernel(
     const vec2* yk,
     vec2* delta_y
 );
-
+*/
 template <uint32_t CDIM>
 void launch_compute_intermediate_derivatives_kernel(
     const bool packed,

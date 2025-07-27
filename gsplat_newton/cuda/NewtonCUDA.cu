@@ -61,7 +61,7 @@ __device__ __forceinline__ vec4 quat_mul(const vec4 &q, const vec4 &p)
         q.w * p.w - q.x * p.x - q.y * p.y - q.z * p.z);
 }
 
-
+// TODO add CDIM as template parameter
 // This single kernel handles solving and updating for all attributes for one Gaussian.
 // Each thread processes one Gaussian.
 __global__ void solve_updates_and_backproject_kernel_impl(
@@ -77,7 +77,7 @@ __global__ void solve_updates_and_backproject_kernel_impl(
     const float* __restrict__ dL_d_opacity,  // [N]
     const float* __restrict__ H_L_opacity,   // [N]
     const float* __restrict__ dL_d_color,    // [N, 3]
-    const float* __restrict__ H_L_color,     // [N, 3, 3]
+    const float* __restrict__ H_L_color,     // [N, 3] only diagonal elements
     // Context tensors
     const float* __restrict__ U_k_bases,     // [N, 2, 3]
     const float* __restrict__ T_k_matrices,  // [N, 2, 3]
@@ -202,7 +202,7 @@ __global__ void solve_updates_and_backproject_kernel_impl(
                 // grad & Hessian pointers advance by K*3; assume external fill
                 int idx = (gid * K + k) * 3 + ch;
                 float g = dL_d_color[idx];             // provided grad
-                float h = H_L_color[idx * 3 + ch] + kMatInvEps; // diag only
+                float h = H_L_color[idx] + kMatInvEps; // diag only
                 sh_coeffs[idx] += -g / h;
             }
         }

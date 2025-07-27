@@ -186,7 +186,7 @@ std::tuple<at::Tensor, at::Tensor, at::Tensor, at::Tensor> spherical_harmonics_L
 
     TORCH_CHECK(coeffs.size(-1) == 3,     "coeffs last dim must be 3");
     TORCH_CHECK(dirs.size(-1) == 3,       "dirs last dim must be 3");
-    TORCH_CHECK(v_colors.size(-1) == 1,   "v_colors last dim must be 1");// the reason is it is the same scalar for all channels in this case
+    TORCH_CHECK(v_colors.size(-1) == 3,   "v_colors last dim must be 3 (CDIM)");// the reason is it is the same scalar for all channels in this case
 
     // outputs
     auto batch_dims = dirs.sizes().slice(0, dirs.dim() - 1);
@@ -381,6 +381,8 @@ compute_intermediate_derivatives_bwd(
             flatten_ids, \
             render_alphas, \
             last_ids, \
+            dL_dcIMG, \
+            H_L_dcIMG, \
             dL_dcSH, \
             H_L_dcSH, \
             dL_dG, \
@@ -429,10 +431,12 @@ compute_intermediate_derivatives_bwd(
 // 3. ASSEMBLE NEWTON DERIVATIVES (it returns gradients of loss and hessians of loss w.r.t attributes)
 // ===================================================================================================
 
-
+//TODO: REMOVE COLOR TERMS
+// BECAUSE WE DO NOT ASSEMBLE THOSE DERIVATIVES HERE
 // Wrapper function to call all split kernels
 std::tuple<at::Tensor, at::Tensor, at::Tensor,  at::Tensor,
-           at::Tensor, at::Tensor, at::Tensor, at::Tensor>
+           at::Tensor, at::Tensor, at::Tensor, at::Tensor,
+           at::Tensor>
 assemble_derivatives_split(
     // Intermediate derivatives
     const at::Tensor dL_dcSH_totals,
@@ -456,12 +460,12 @@ assemble_derivatives_split(
     const at::Tensor conics_2d,
     const at::Tensor p_k,
     const at::Tensor camera_pos,
-    const at::Tensor dL_dck,
+    const at::Tensor dL_dck
 //    const at::Tensor dL_dc,
 //    const at::Tensor H_L_dc
 ) {
     const int num_gaussians = p_k.size(0);
-    const int num_coeffs = dcRAST_dck.size(-2);
+    const int num_coeffs = dL_dck.size(-2);
     auto options = p_k.options();
 
     // Allocate output tensors
@@ -476,6 +480,13 @@ assemble_derivatives_split(
     auto dL_dSigma = torch::empty({num_gaussians,  3}, options);
     auto H_L_sigma = torch::empty({num_gaussians, 6}, options);
     auto H_L_mixed = torch::empty({num_gaussians, 6}, options);
+    // T_k matrix is of size 2x3
+    auto T_matrices = torch::empty({num_gaussians, 2, 3}, options);
+    TORCH_CHECK(dSigma_dp.sizes()[1] == num_gaussians &&
+                dSigma_dp.sizes()[2] == 3 &&
+                dSigma_dp.sizes()[3] == 2 &&
+                dSigma_dp.sizes()[4] == 2,
+            "Expected dimensions of dSigm_dp to be [N, 3, 2, 2]");
     // Launch split kernels
         launch_assemble_derivatives_kernels(
             num_gaussians,
@@ -492,7 +503,6 @@ assemble_derivatives_split(
             H_L_mixedinv_totals,
             jacobians,
             dSigma_dp,
-            dc_sh_dp,
             H_mean2d_dp,
             H_Sigma_dp,
             p_k,
@@ -503,18 +513,21 @@ assemble_derivatives_split(
             dL_dlambda,
             H_L_dlambda,
             dL_dtheta,
+            H_L_dtheta,
             dL_dcolor,
             H_L_dcolor,
             dL_dSigma,
             H_L_sigma,
-            H_L_mixed
+            H_L_mixed,
+            T_matrices
         );
 
     return std::make_tuple(dL_dvk, H_L_dvk, dL_dlambda, H_L_dlambda,
                           dL_dtheta, H_L_dtheta,
-                          dL_dcolor, H_L_dcolor);
+                          dL_dcolor, H_L_dcolor, T_matrices);
 }
 
+/*
 
 torch::Tensor compute_y_updates(
     const torch::Tensor grad_y,
@@ -550,7 +563,9 @@ torch::Tensor compute_y_updates(
 
     return delta_y;
 }
+*/
 
+/*
 void accumulate_y_2nd_order(
     // MODIFIED: Changed masks to be optional for consistency
     const at::optional<at::Tensor>& masks,
@@ -630,7 +645,7 @@ void accumulate_y_2nd_order(
 #undef LAUNCH_ACCUMULATE_KERNEL
 }
 
-
+*/
 
 // =====================
 // Losses

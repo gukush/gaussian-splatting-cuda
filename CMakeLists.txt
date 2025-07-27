@@ -362,6 +362,7 @@ if(BUILD_TESTS)
             tests/test_numerical_gradients.cpp
             tests/test_garden_data.cpp
             tests/torch_impl.cpp
+            tests/test_newton_kernels.cpp
     )
 
     # Create test executable

@@ -639,6 +639,13 @@ __global__ void compute_covariance_derivatives_kernel_impl(
     //----------------------------------------------------------------------
     // 6.  Jacobian of the perspective projection  J
     //----------------------------------------------------------------------
+    if (z < 1e-6f) {
+        // either set your dS/dS2 to zero or some safe fallback
+        dS[0]=dS[1]=dS[2]=dS[3]= 0.0f;
+        dS2[0]=dS2[1]=dS2[2]=dS2[3]=0.0f;
+        return;
+        }
+
     const float invZ  = 1.f / z;
     const float invZ2 = invZ * invZ;
     const float J[2][3] = { { invZ, 0.f  , -pC[0]*invZ2 },

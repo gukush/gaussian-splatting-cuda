@@ -153,12 +153,14 @@ RenderOutput rasterize_newton_step(
     const float far_plane = 10000.0f;
     const float radius_clip = 0.0f;
     const bool calc_compensations = antialiased;
+    /*
     std::cout << "About to call projection kernel..." << std::endl;
 std::cout << "viewmat.defined(): " << viewmat.defined() << std::endl;
 std::cout << "viewmat.is_cuda(): " << viewmat.is_cuda() << std::endl;
 std::cout << "viewmat.dtype(): " << viewmat.dtype().name() << std::endl;
 std::cout << "viewmat.sizes(): " << viewmat.sizes() << std::endl;
 std::cout << "viewmat.is_contiguous(): " << viewmat.is_contiguous() << std::endl; // Add this
+*/
 if (!viewmat.defined()) {
     std::cerr << "ERROR: viewmat is not defined!" << std::endl;
     // Handle error or abort

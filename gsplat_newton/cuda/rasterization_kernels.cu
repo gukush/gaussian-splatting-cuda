@@ -26,7 +26,6 @@ using namespace gsplat;
  */
 
  namespace gsplat_newton {
-
 template <uint32_t CDIM, typename scalar_t>
 __global__ void compute_intermediate_derivatives_kernel(
     const uint32_t C, const uint32_t N, const uint32_t n_isects, const bool packed,
@@ -57,7 +56,7 @@ __global__ void compute_intermediate_derivatives_kernel(
     vec3 *__restrict__ H_L_mean2d,       // [N, 3]
     scalar_t *__restrict__ H_L_conic,    // [N, 6]
     scalar_t *__restrict__ H_L_mixed,    // [N, 6]
-    scalar_t *__restrict__ dL_dopac,        // Σ(∂L/∂σₖ) hopefully... ??? [N, 3]
+    scalar_t *__restrict__ dL_dopac,     // Σ(∂L/∂σₖ) hopefully... ??? [N, 3]
     scalar_t *__restrict__ H_L_dopac     // [N, ???]
 ) {
     // --- Boilerplate: Thread and memory indexing (from original kernel) ---
@@ -98,6 +97,7 @@ __global__ void compute_intermediate_derivatives_kernel(
     float T = T_final;
     float buffer[CDIM] = {0.f};
     const int32_t bin_final = inside ? last_ids[pix_id] : 0;
+
     // --- Main Loop over Gaussian Batches ---
     int32_t range_start = tile_offsets[tile_id];
     int32_t range_end =
@@ -173,18 +173,28 @@ __global__ void compute_intermediate_derivatives_kernel(
                 continue;
             }
 
-            // Initialize local derivatives to zero for this thread
+            // Initialize local derivatives to zero for this thread (moved outside if statement)
             float dc_dcSH_local = 0.f;
-            float dc_dG_local[CDIM]  = {0.f};
-            float dc_opac_local[CDIM]  = {0.f};
+            float dc_dG_local[CDIM] = {0.f};
+            float dc_opac_local[CDIM] = {0.f};
             vec2 dG_dmean2d_local = {0.f, 0.f};
             vec3 dG_dconic_local = {0.f, 0.f, 0.f};
             vec3 H_G_mean2d_local = {0.f, 0.f, 0.f};
             float H_G_conic_local[6] = {0.f};
             float H_G_mixed_local[6] = {0.f};
+            float H_L_G_local = 0.0f;
+            float dL_dcSH_local[CDIM] = {0.f};
+            float dL_dG_local = 0.0f, dL_opac_scalar = 0.0f;
+            vec2 dL_dmean2d_local = {0.f, 0.f};
+            vec3 dL_dconic_local = {0.f, 0.f, 0.f};
+            vec3 H_L_mean2d_local = {0.f, 0.f, 0.f};
+            float H_L_conic_local[6] = {0.f};
+            float H_L_mixed_local[6] = {0.f};
+            float H_L_dcSH_local[CDIM] = {0.f};
+            float H_L_dopac_local = 0.0f;
 
             if (valid) {
-                const int32_t g = id_batch[t];
+            //    const int32_t g = id_batch[t];
                 const vec3 xy_opac = xy_opacity_batch[t];
                 const float opac = xy_opac.z;
                 const vec2 mean2d = {xy_opac.x, xy_opac.y};
@@ -196,23 +206,23 @@ __global__ void compute_intermediate_derivatives_kernel(
                 const float ra = 1.0f / (1.0f - alpha);
                 const float T_before = T * ra;
                 const float GkT = vis * T_before;
-                float Dk [CDIM];
+                float Dk[CDIM];
                 #pragma unroll
-                for (uint32_t k=0;k<CDIM;++k)
+                for (uint32_t k = 0; k < CDIM; ++k)
                     Dk[k] = buffer[k] / T_before;   // safe (T>0)
 
                 /* colour difference  (ĉ_k - D_k)  */
                 float color_term[CDIM];
                 #pragma unroll
-                for (uint32_t k=0;k<CDIM;++k)
+                for (uint32_t k = 0; k < CDIM; ++k)
                     color_term[k] = rgbs_batch[t*CDIM+k] - Dk[k];
 
                 // --- Calculate this pixel's contribution to intermediate derivatives ---
                 dc_dcSH_local = alpha * T_before; // value is the same for each channel from what I infer.
                 #pragma unroll
-                for (uint32_t k=0;k<CDIM;++k){
-                    dc_dG_local  [k] = opac * T_before * color_term[k]; // eq.(2)
-                    dc_opac_local[k] = GkT            * color_term[k];      // eq.(2)
+                for (uint32_t k = 0; k < CDIM; ++k){
+                    dc_dG_local[k] = opac * T_before * color_term[k]; // eq.(2)
+                    dc_opac_local[k] = GkT * color_term[k];      // eq.(2)
                 }
                 const vec2 v_grad = {conic.x * delta.x + conic.y * delta.y, conic.y * delta.x + conic.z * delta.y};
 
@@ -235,7 +245,7 @@ __global__ void compute_intermediate_derivatives_kernel(
                 H_G_conic_local[2] = vis * 0.25f * dx2 * dy2;
                 H_G_conic_local[3] = vis * 0.5f * dx2 * dxdy;
                 H_G_conic_local[4] = vis * 0.5f * dy2 * dxdy;
-                H_G_conic_local[5] = vis        * dx2 * dy2;
+                H_G_conic_local[5] = vis * dx2 * dy2;
 
                 H_G_mixed_local[0] = vis * (0.5f * dx2 * v_grad.x - delta.x);
                 H_G_mixed_local[1] = vis * (dxdy * v_grad.x - delta.y);
@@ -254,36 +264,34 @@ __global__ void compute_intermediate_derivatives_kernel(
                 float dL_dc[CDIM], Hc_diag[CDIM];
                 #pragma unroll
                 for (uint32_t k = 0; k < CDIM; ++k) {
-                    dL_dc[k]  =  dL_dcIMG [pix_id*CDIM + k];
+                    dL_dc[k] = dL_dcIMG[pix_id*CDIM + k];
                     Hc_diag[k] = H_L_dcIMG[pix_id*CDIM + k];
                 }
 
-                float dL_dcSH_local[CDIM];
-                float dL_dG_local = 0.0f, dL_opac_scalar = 0.0f;
                 #pragma unroll
                 for (uint32_t k = 0; k < CDIM; ++k) {
-                    dL_dcSH_local[k]  = dL_dc[k] * dc_dcSH_local;          // ∂L/∂c̃_k
-                    dL_dG_local      += dL_dc[k] * dc_dG_local[k];         // g_G
-                    dL_opac_scalar   += dL_dc[k] * dc_opac_local[k];       // ∂L/∂σ_k
+                    dL_dcSH_local[k] = dL_dc[k] * dc_dcSH_local;          // ∂L/∂c̃_k
+                    dL_dG_local += dL_dc[k] * dc_dG_local[k];         // g_G
+                    dL_opac_scalar += dL_dc[k] * dc_opac_local[k];       // ∂L/∂σ_k
                 }
-                float H_L_G_local = 0.0f;
 
                 #pragma unroll
                 for (uint32_t k = 0; k < CDIM; ++k) {
                     H_L_G_local += Hc_diag[k] * dc_dG_local[k] * dc_dG_local[k];
-                } //  + 0  (c is linear in G ⇒ no “intrinsic’’ term)
+                } //  + 0  (c is linear in G ⇒ no "intrinsic'' term)
+
                 // dL_dmean2d. dL_dconic
-                vec2 dL_dmean2d_local = {
+                dL_dmean2d_local = {
                     dL_dG_local * dG_dmean2d_local.x,
                     dL_dG_local * dG_dmean2d_local.y };
 
-                }
-                vec3 dL_dconic_local = {
+                dL_dconic_local = {
                     dL_dG_local * dG_dconic_local.x,
                     dL_dG_local * dG_dconic_local.y,
                     dL_dG_local * dG_dconic_local.z };
+
                 // -- Hessian  Σμ  (xx,xy,yy) -
-                vec3 H_L_mean2d_local = {
+                H_L_mean2d_local = {
                     H_L_G_local * dG_dmean2d_local.x * dG_dmean2d_local.x +
                         dL_dG_local * H_G_mean2d_local.x,                // xx
                     H_L_G_local * dG_dmean2d_local.x * dG_dmean2d_local.y +
@@ -292,7 +300,6 @@ __global__ void compute_intermediate_derivatives_kernel(
                         dL_dG_local * H_G_mean2d_local.z };              // yy
 
                 // -- Hessian  Σa  (A,A) (C,C) (A,C) (A,B) (B,C) (B,B) in that order --
-                float H_L_conic_local[6];
                 H_L_conic_local[0] = H_L_G_local * dG_dconic_local.x * dG_dconic_local.x +
                                     dL_dG_local * H_G_conic_local[0];          // (A,A)
                 H_L_conic_local[1] = H_L_G_local * dG_dconic_local.z * dG_dconic_local.z +
@@ -307,7 +314,6 @@ __global__ void compute_intermediate_derivatives_kernel(
                                     dL_dG_local * H_G_conic_local[5];          // (B,B)
 
                 /* -- mixed Hessian  Σμa  (flattened in exactly your order) --------- */
-                float H_L_mixed_local[6];
                 H_L_mixed_local[0] = H_L_G_local * dG_dmean2d_local.x * dG_dconic_local.x +
                                     dL_dG_local * H_G_mixed_local[0];          // μx–A
                 H_L_mixed_local[1] = H_L_G_local * dG_dmean2d_local.y * dG_dconic_local.x +
@@ -321,22 +327,22 @@ __global__ void compute_intermediate_derivatives_kernel(
                 H_L_mixed_local[5] = H_L_G_local * dG_dmean2d_local.y * dG_dconic_local.z +
                                     dL_dG_local * H_G_mixed_local[5];          // μy–C
 
-                float H_L_dcSH_local[CDIM];
                 #pragma unroll
                 for (uint32_t k = 0; k < CDIM; ++k) {
                     H_L_dcSH_local[k] = Hc_diag[k] * dc_dcSH_local * dc_dcSH_local;
                 }
-                float H_L_dopac_local = 0.0f;          // sandwich part
-                float intrinsic_opac = 0.0f;          // ∑ dL/∂c · ∂²c/∂p²
+
+                //float intrinsic_opac = 0.0f;          // ∑ dL/∂c · ∂²c/∂p²
 
                 #pragma unroll
                 for (uint32_t k = 0; k < CDIM; ++k) {
-                    H_L_opac_local += Hc_diag[k] * dc_opac_local[k] * dc_opac_local[k];
+                    H_L_dopac_local += Hc_diag[k] * dc_opac_local[k] * dc_opac_local[k];
                     // assumption is that d2c/dopac2 is 0
                     //intrinsic_opac += dL_dc[k]  * (vis * vis * T_before * ra
                     //                           * rgbs_batch[t*CDIM + k]);
                 }
                 //H_L_dopac_local += intrinsic_opac;     // full Hessian entry
+            }
 
             // --- Aggregate contributions within warp using warpSum ---
             #pragma unroll
@@ -344,16 +350,16 @@ __global__ void compute_intermediate_derivatives_kernel(
                 warpSum(dL_dcSH_local[k], warp);
             }
 
-            warpSum(dL_dG_local      , warp);
-            warpSum(dL_opac_scalar    , warp);
-            warpSum(dL_dmean2d_local  , warp);
-            warpSum(dL_dconic_local   , warp);
-            warpSum(H_L_mean2d_local  , warp);
+            warpSum(dL_dG_local, warp);
+            warpSum(dL_opac_scalar, warp);
+            warpSum(dL_dmean2d_local, warp);
+            warpSum(dL_dconic_local, warp);
+            warpSum(H_L_mean2d_local, warp);
 
             #pragma unroll
-            for (int k=0;k<6;++k){
-                warpSum(H_L_conic_local [k], warp);
-                warpSum(H_L_mixed_local [k], warp);
+            for (int k = 0; k < 6; ++k){
+                warpSum(H_L_conic_local[k], warp);
+                warpSum(H_L_mixed_local[k], warp);
             }
             #pragma unroll
             for (uint32_t k = 0; k < CDIM; ++k)
@@ -364,38 +370,45 @@ __global__ void compute_intermediate_derivatives_kernel(
             if (warp.thread_rank() == 0) {
                 int32_t g = id_batch[t];
 
-                float* dCptr  = dL_dcSH  + g*CDIM;        // [N,CDIM]
+                float* dCptr = dL_dcSH + g*CDIM;        // [N,CDIM]
                 #pragma unroll
-                for (uint32_t k=0;k<CDIM;++k)
+                for (uint32_t k = 0; k < CDIM; ++k)
                     gpuAtomicAdd(dCptr+k, dL_dcSH_local[k]);
-                gpuAtomicAdd(dL_dcSH + g, dc_dcSH_local);
-                gpuAtomicAdd(dL_dG       + g,  dL_dG_local);          // [N]
-                gpuAtomicAdd(&(dL_opac   [g]), dL_opac_scalar);       // [N]
+
+                gpuAtomicAdd(dL_dG + g, dL_dG_local);          // [N]
+                gpuAtomicAdd(&(dL_dopac[g]), dL_opac_scalar);       // [N]
 
                 gpuAtomicAdd(&(dL_dmean2d[g].x), dL_dmean2d_local.x); // [N,2]
                 gpuAtomicAdd(&(dL_dmean2d[g].y), dL_dmean2d_local.y);
-                gpuAtomicAdd(&(dL_dconic[g].x ), dL_dconic_local.x ); // [N,3]
-                gpuAtomicAdd(&(dL_dconic[g].y ), dL_dconic_local.y );
-                gpuAtomicAdd(&(dL_dconic[g].z ), dL_dconic_local.z );
+                gpuAtomicAdd(&(dL_dconic[g].x), dL_dconic_local.x); // [N,3]
+                gpuAtomicAdd(&(dL_dconic[g].y), dL_dconic_local.y);
+                gpuAtomicAdd(&(dL_dconic[g].z), dL_dconic_local.z);
+
                 // ---- second‑order ----------------------------------------------
                 gpuAtomicAdd(&(H_L_mean2d[g].x), H_L_mean2d_local.x); // [N,3]
                 gpuAtomicAdd(&(H_L_mean2d[g].y), H_L_mean2d_local.y);
                 gpuAtomicAdd(&(H_L_mean2d[g].z), H_L_mean2d_local.z);
-                float* HcshPtr = H_L_dcSH + g*CDIM;
+
+                float* HcshPtr = H_L_dcsh + g*CDIM;
                 #pragma unroll
                 for (uint32_t k = 0; k < CDIM; ++k)
                     gpuAtomicAdd(HcshPtr + k, H_L_dcSH_local[k]);
-                gpuAtomicAdd(H_L_opac + g, H_L_opac_local);
-                float* HcPtr   = H_L_conic  + 6*g;                    // [N,6]
-                float* HmxPtr  = H_L_mixed  + 6*g;                    // [N,6]
+
+                gpuAtomicAdd(H_L_dopac + g, H_L_dopac_local);
+
+                float* HcPtr = H_L_conic + 6*g;                    // [N,6]
+                float* HmxPtr = H_L_mixed + 6*g;                    // [N,6]
                 #pragma unroll
-                for (int k=0;k<6;++k){
-                    gpuAtomicAdd(HcPtr +k, H_L_conic_local [k]);
-                    gpuAtomicAdd(HmxPtr+k, H_L_mixed_local[k]);
+                for (int k = 0; k < 6; ++k){
+                    gpuAtomicAdd(HcPtr + k, H_L_conic_local[k]);
+                    gpuAtomicAdd(HmxPtr + k, H_L_mixed_local[k]);
                 }
+            }
         }
     }
 }
+
+
 template <uint32_t CDIM>
 void launch_compute_intermediate_derivatives_kernel(
     const bool packed,
@@ -492,6 +505,9 @@ void launch_compute_intermediate_derivatives_kernel(
 }
 
 // Explicit Instantiation for various color dimensions (CDIM)
+
+
+
 #define __INS__(CDIM)                                                                   \
     template void launch_compute_intermediate_derivatives_kernel<CDIM>(                 \
         const bool packed,                                                              \
@@ -511,13 +527,14 @@ void launch_compute_intermediate_derivatives_kernel(
         const at::Tensor dL_dcIMG,                                                      \
         const at::Tensor H_L_dcIMG,                                                     \
         at::Tensor dL_dcSH,                                                             \
+        at::Tensor H_L_dcSH,                                                            \
         at::Tensor dL_dG,                                                               \
         at::Tensor dL_dmean2d,                                                          \
         at::Tensor dL_dconic,                                                           \
         at::Tensor H_L_mean2d,                                                          \
         at::Tensor H_L_conic,                                                           \
         at::Tensor H_L_mixed,                                                           \
-        at::Tensor dL_opac,                                                             \
+        at::Tensor dL_dopac,                                                             \
         at::Tensor H_L_dopac);                                                          \
 
 __INS__(1)
@@ -542,4 +559,6 @@ __INS__(513)
 
 #undef __INS__
 
-} //namespace gsplat_newton
+
+}//namespace gsplat_newton
+

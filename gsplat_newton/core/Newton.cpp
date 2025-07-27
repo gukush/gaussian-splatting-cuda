@@ -57,6 +57,8 @@ void local_newton_backward(
         flatten_ids,
         render_alphas,
         last_ids,
+        context.dL_d_color_img,
+        context.H_L_color_img,
         means.size(0)
     );
 
@@ -91,8 +93,8 @@ void local_newton_backward(
         context.coeffs,
         dL_dcSH_totals
     );
-    auto& dL_dcolor = std::get<0>(sh_outputs);
-    auto& H_L_dcolor = std::get<1>(sh_outputs);
+    context.dL_d_color = std::get<0>(sh_outputs);
+    context.H_L_color = std::get<1>(sh_outputs);
     auto& dLcolor_dr = std::get<2>(sh_outputs);
     auto& H_Lcolor_r = std::get<3>(sh_outputs);
 
@@ -123,7 +125,9 @@ void local_newton_backward(
         context.d_mean2d_dp, // jacobians
         context.viewmat,
         context.d_Sigma_dp, // ∂Σ/∂p  [N,3,3]
+        dLcolor_dp,
         context.H_mean2d_dp, // ∂²π/∂p² [N,2,3,3]
+        H_Lcolor_dp,
         context.H_Sigma_dp, // ∂²Σ/∂p² [N,3,3]
         dSigma_dtheta,
         H_Sigma_dtheta,
@@ -131,7 +135,7 @@ void local_newton_backward(
         context.conics,
         means, // p_k
         context.campos,// camera_pos
-        dL_dcolor,
+        context.dL_d_color
     );
 
     context.dL_d_pos      = std::get<0>(newton_systems);
@@ -140,8 +144,9 @@ void local_newton_backward(
     context.H_L_scale     = std::get<3>(newton_systems);
     context.dL_d_rot      = std::get<4>(newton_systems);
     context.H_L_rot       = std::get<5>(newton_systems);
-    context.dL_d_color    = std::get<6>(newton_systems);
-    context.H_L_color     = std::get<7>(newton_systems);
+    //context.dL_d_color    = std::get<6>(newton_systems);
+    //context.H_L_color     = std::get<7>(newton_systems);
+    context.T_matrices    = std::get<8>(newton_systems);
 
     // We will need to compute color derivatives separately or assume they are part of another tensor.
     // For now, creating placeholder tensors for color update.
@@ -184,8 +189,9 @@ void solve_and_update(
     const auto dL_d_color = context.dL_d_color;
     const auto H_L_color = context.H_L_color;
     const auto d_mean2d_dp = context.d_mean2d_dp;
-    const auto T_matrices = context.T_matrices;
+    //const auto T_matrices = context.T_matrices;
     const auto view_dirs = context.view_dirs;
+    const auto T_matrices = context.T_matrices;
     CHECK_INPUT(dL_d_pos);
     CHECK_INPUT(H_L_pos);
     CHECK_INPUT(dL_d_scale);
