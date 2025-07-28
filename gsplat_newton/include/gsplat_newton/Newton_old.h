@@ -63,7 +63,6 @@ void solve_and_update(
     uint32_t image_height
 );
 
-// Forward declaration for the unified CUDA kernel launcher
 void launch_solve_and_update_all_attributes_kernel(
     const at::Tensor dL_d_pos,
     const at::Tensor H_L_pos,
@@ -74,17 +73,13 @@ void launch_solve_and_update_all_attributes_kernel(
     const at::Tensor dL_d_opacity,
     const at::Tensor H_L_opacity,
     const at::Tensor dL_d_color,
-    const at::Tensor H_L_color, // Placeholder for color Hessian
-    // Tensors from context needed for backprojection
-    const at::Tensor U_k_bases, // Basis for position update
-    const at::Tensor T_k_matrices, // Basis for scale update
+    const at::Tensor H_L_color,
+    const at::Tensor U_k_bases,
+    const at::Tensor T_k_matrices,
     const at::Tensor view_dirs,
-    // Gaussian parameters to be updated (in-out)
-    at::Tensor means,
-    at::Tensor scales,
-    at::Tensor quats,
-    at::Tensor opacities,
-    at::Tensor sh_coeffs
+    const at::Tensor radii,
+    at::Tensor means, at::Tensor scales, at::Tensor quats,
+    at::Tensor opacities, at::Tensor sh_coeffs
 );
 
 } // namespace gsplat

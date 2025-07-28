@@ -1,4 +1,4 @@
-#include "gsplat_newton/Newton.h"
+#include "gsplat_newton/kernels.hpp"
 #include "Common.h"
 #include "Utils.cuh" // For matrix operations
 #include <ATen/Dispatch.h>
@@ -67,6 +67,7 @@ __device__ __forceinline__ vec4 quat_mul(const vec4 &q, const vec4 &p)
 __global__ void solve_updates_and_backproject_kernel_impl(
     const uint32_t N,
     const int K,
+    const int32_t* __restrict__ radii,
     // Gradients and Hessians
     const float* __restrict__ dL_d_pos,      // [N, 2]
     const float* __restrict__ H_L_pos,       // [N, 2, 2]
@@ -91,6 +92,7 @@ __global__ void solve_updates_and_backproject_kernel_impl(
 ) {
     const uint32_t gid = blockIdx.x * blockDim.x + threadIdx.x;
     if (gid >= N) return;
+    if(radii[g_idx*2] <= 0 || radii[g_idx*2+1] <= 0) return;
     vec2  g_pos = glm::make_vec2(dL_d_pos + gid * 2);
     vec2  g_scale = glm::make_vec2(dL_d_scale + gid * 2);
     float g_rot      = dL_d_rot[gid];
@@ -221,6 +223,7 @@ void launch_solve_and_update_all_attributes_kernel(
     const at::Tensor dL_d_color, const at::Tensor H_L_color,
     const at::Tensor U_k_bases, const at::Tensor T_k_matrices,
     const at::Tensor view_dirs,
+    const at::Tensor radii,
     at::Tensor means, at::Tensor scales, at::Tensor quats,
     at::Tensor opacities, at::Tensor sh_coeffs
 ) {
@@ -233,6 +236,7 @@ void launch_solve_and_update_all_attributes_kernel(
     solve_updates_and_backproject_kernel_impl<<<blocks, threads, 0, at::cuda::getCurrentCUDAStream()>>>(
         N,
         K,
+        radii.data_ptr<int32_t>(),
         dL_d_pos.data_ptr<float>(), H_L_pos.data_ptr<float>(),
         dL_d_scale.data_ptr<float>(), H_L_scale.data_ptr<float>(),
         dL_d_rot.data_ptr<float>(), H_L_rot.data_ptr<float>(),

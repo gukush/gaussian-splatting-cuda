@@ -207,6 +207,7 @@ if (!viewmat.defined()) {
         context->means2d = means2d;
         context->depths = depths;
         context->conics = conics;
+        context->Ks = K;
         //context->compensations = compensations;
         //context->d_mean2d_dp = jacobians;
         //context->H_mean2d_dp = torch::stack({

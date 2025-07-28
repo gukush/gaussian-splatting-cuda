@@ -336,13 +336,15 @@ void launch_chain_rule_color_position_kernel(
     at::Tensor       color_pos_grad,  // [...,3]
     at::Tensor       color_pos_hess   // [...,6]
 );
-
 void launch_assemble_derivatives_kernels(
     const int num_gaussians,
     // Input tensors for conversion
     const at::Tensor conics_2d,
     const at::Tensor campos,
     const at::Tensor viewmats,
+    const at::Tensor radii,
+    const at::Tensor Ks,
+    const at::Tensor covars,
     const at::Tensor quats,
     // ... other input tensors for the main kernels
     const at::Tensor dL_dcSH_totals,
@@ -352,23 +354,19 @@ void launch_assemble_derivatives_kernels(
     const at::Tensor H_L_mean2d_totals,
     const at::Tensor H_L_conic_totals,
     const at::Tensor H_L_mixedinv_totals,
-    const at::Tensor jacobians,
-    const at::Tensor dSigma_dp,
-    const at::Tensor H_mean2d_dp,
-    const at::Tensor H_Sigma_dp,
+    // REMOVED: jacobians, dSigma_dp, H_Sigma_dp (no longer needed as inputs)
     const at::Tensor p_k,
     const at::Tensor dSigma_dtheta,
     const at::Tensor H_Sigma_dtheta,
     // OUTPUTS:
     at::Tensor d_L_vk, // [N, 2]
-    at::Tensor H_L_vk, // // [N, 3]
+    at::Tensor H_L_vk, // [N, 3]
     at::Tensor dL_dlambda,  // [N]
     at::Tensor H_L_dlambda,   // [N]
     at::Tensor dL_dtheta, // [N]
     at::Tensor d2L_dtheta2, // [N]
     at::Tensor dL_dcoeffs,  // Output: ∂L / ∂c_k as a vec3 [N, num_sh_coeffs]
     at::Tensor H_L_dcoeffs, // Output: Diagonal of ∂²L / ∂c_k² [N, num_sh_coeffs]
-    // opacity hessians and gradients are compute directly from rasterizaiton backward pass
     // temporary outputs
     at::Tensor dL_dSigma,
     at::Tensor H_L_sigma,
@@ -376,58 +374,6 @@ void launch_assemble_derivatives_kernels(
     at::Tensor T_matrices
 );
 
-/*
-template <uint32_t CDIM>
-void launch_accumulate_y_2nd_order_kernel(
-    const uint32_t C,
-    const uint32_t n_isects,
-    const bool packed,
-    const bool* masks,
-    const uint32_t image_width,
-    const uint32_t image_height,
-    const uint32_t tile_size,
-    const uint32_t tile_width,
-    const uint32_t tile_height,
-    const at::Tensor tile_offsets,
-    const at::Tensor flatten_ids,
-    const at::Tensor last_ids,
-    const at::Tensor dL_dc,
-    const at::Tensor d2L_dc2,
-    const at::Tensor dcdy,
-    const at::Tensor d2cdy2,
-    at::Tensor grad_y,
-    at::Tensor hess_y,
-    size_t shmem_size
-);
-
-void accumulate_y_2nd_order(
-    // MODIFIED: Changed masks to be optional for consistency
-    const at::optional<at::Tensor>& masks,
-    const uint32_t image_width,
-    const uint32_t image_height,
-    const uint32_t tile_size,
-    const at::Tensor tile_offsets,
-    const at::Tensor flatten_ids,
-    const at::Tensor last_ids,
-    const at::Tensor dL_dc,
-    const at::Tensor d2L_dc2,
-    const at::Tensor dcdy,
-    const at::Tensor d2cdy2,
-    at::Tensor grad_y,
-    at::Tensor hess_y
-);
-
-
-void launch_compute_y_updates_kernel(
-    const uint32_t n_isects,
-    const float* grad_y,
-    const float* hess_y,
-    const bool do_reg,
-    const float lambda,
-    const vec2* yk,
-    vec2* delta_y
-);
-*/
 template <uint32_t CDIM>
 void launch_compute_intermediate_derivatives_kernel(
     const bool packed,
@@ -493,6 +439,59 @@ void launch_fusedssim_LN_kernel(
     float* s12_map,
     bool train,
     cudaStream_t stream
+);
+
+
+// Newton
+
+void local_newton_backward(
+    const LocalNewtonContext& context,
+    at::Tensor means,
+    at::Tensor scales,
+    at::Tensor quats,
+    at::Tensor opacities,
+    at::Tensor sh_coeffs,
+    const at::Tensor dL_d_color_img,
+    const at::Tensor H_L_color_img, // Assuming this is passed in
+    const at::Tensor render_alphas,
+    const at::Tensor last_ids,
+    const at::Tensor tile_offsets,
+    const at::Tensor flatten_ids,
+    uint32_t image_width,
+    uint32_t image_height
+);
+
+void local_newton_backward(
+    LocalNewtonContext& context,
+    SplatData& gaussian_model,
+    uint32_t image_width,
+    uint32_t image_height
+);
+
+void solve_and_update(
+    const LocalNewtonContext& context,
+    SplatData& gaussian_model,
+    uint32_t image_width,
+    uint32_t image_height
+);
+
+void launch_solve_and_update_all_attributes_kernel(
+    const at::Tensor dL_d_pos,
+    const at::Tensor H_L_pos,
+    const at::Tensor dL_d_scale,
+    const at::Tensor H_L_scale,
+    const at::Tensor dL_d_rot,
+    const at::Tensor H_L_rot,
+    const at::Tensor dL_d_opacity,
+    const at::Tensor H_L_opacity,
+    const at::Tensor dL_d_color,
+    const at::Tensor H_L_color,
+    const at::Tensor U_k_bases,
+    const at::Tensor T_k_matrices,
+    const at::Tensor view_dirs,
+    const at::Tensor radii,
+    at::Tensor means, at::Tensor scales, at::Tensor quats,
+    at::Tensor opacities, at::Tensor sh_coeffs
 );
 
 } // namespace gsplat_newton

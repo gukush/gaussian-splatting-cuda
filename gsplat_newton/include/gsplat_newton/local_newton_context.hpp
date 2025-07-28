@@ -13,21 +13,8 @@ struct LocalNewtonContext {
     torch::Tensor view_dirs;     // [C, N, 3] - View directions from camera to mean
     torch::Tensor radii;
     torch::Tensor viewmat;
-    // ==================================
-    // PROJECTION DERIVATIVES (w.r.t. 3D position p_k)
-    // ==================================
-    // For Mean (π_k)
-    torch::Tensor d_mean2d_dp;   // [C, N, 2, 3] - Jacobian ∂π/∂p
-    torch::Tensor H_mean2d_dp;   // [C, N, 2, 3, 3] - Hessian ∂²π/∂p²
-
-    // For Covariance (Σ_k)
-    torch::Tensor d_Sigma_dp;    // [C, N, 3, 2, 2] - Jacobian ∂Σ/∂p (for p_x, p_y, p_z)
-    torch::Tensor H_Sigma_dp;    // [C, N, 6, 2, 2] - Compacted Hessian ∂²Σ/∂p²
-
-    // For SH View Direction (r_k)
-    torch::Tensor d_r_dp;        // [C, N, 3, 3] - Jacobian ∂r/∂p
-    torch::Tensor H_r_dp;        // [C, N, 18?] - Hessian ∂²r/∂p² (or compacted)
-
+    torch::Tensor covars;
+    torch::Tensor Ks;
     // ==================================
     // RASTERIZATION BACKWARD AGGREGATES
     // ==================================

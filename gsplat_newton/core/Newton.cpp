@@ -1,5 +1,5 @@
 #include "core/splat_data.hpp"
-#include "gsplat_newton/Newton.h"
+//#include "gsplat_newton/Newton.h"
 #include "Common.h"
 #include "gsplat_newton/kernels.hpp" // User's wrappers
 //#include "utils/cuda_utils.cuh"
@@ -41,6 +41,10 @@ void local_newton_backward(
     CHECK_INPUT(tile_offsets);
     CHECK_INPUT(flatten_ids);
 
+
+    auto [covars, precis] = gsplat::quat_scale_to_covar_preci_fwd(
+            quats, scales, true, false, false);
+    context.covars = covars;
     // --- Stage 1: Backward Pass through Rasterizer ---
     // Computes per-Gaussian aggregated derivatives from image-space loss derivatives.
     auto intermediate_derivs = compute_intermediate_derivatives_bwd(
@@ -118,21 +122,6 @@ void local_newton_backward(
     // this one does formulas for position, scale and rotation
     // opacity is calculated in bwd of rasterization
     // color is calculated in spherical harmonics LN (dcRAST_dck)
-    //
-    // Combines projection derivatives (from context) and rasterization derivatives (from above).
-        // DEBUG: Check inputs to assembly
-    std::cout << "=== Before Assembly ===" << std::endl;
-    std::cout << "jacobians NaN: " << torch::isnan(context.d_mean2d_dp).any().item<bool>() << std::endl;
-    std::cout << "d_Sigma_dp NaN: " << torch::isnan(context.d_Sigma_dp).any().item<bool>() << std::endl;
-    std::cout << "H_mean2d_dp NaN: " << torch::isnan(context.H_mean2d_dp).any().item<bool>() << std::endl;
-    std::cout << "H_Sigma_dp NaN: " << torch::isnan(context.H_Sigma_dp).any().item<bool>() << std::endl;
-
-    // Check magnitudes
-    std::cout << "jacobians norm: " << context.d_mean2d_dp.norm().item<float>() << std::endl;
-    std::cout << "d_Sigma_dp norm: " << context.d_Sigma_dp.norm().item<float>() << std::endl;
-    std::cout << "H_mean2d_dp norm: " << context.H_mean2d_dp.norm().item<float>() << std::endl;
-    std::cout << "H_Sigma_dp norm: " << context.H_Sigma_dp.norm().item<float>() << std::endl;
-
     // Check intermediate inputs
     std::cout << "dL_dmean2d_totals norm: " << dL_dmean2d_totals.norm().item<float>() << std::endl;
     std::cout << "dL_dconic_totals norm: " << dL_dconic_totals.norm().item<float>() << std::endl;
@@ -149,14 +138,12 @@ void local_newton_backward(
         H_L_mean2d_totals,
         H_L_conic_totals,
         H_L_mixedinv_totals,
-        // Projection derivatives from context
-        context.d_mean2d_dp, // jacobians
+        context.radii,
+        context.Ks,
+        context.covars,
         context.viewmat,
-        context.d_Sigma_dp, // ∂Σ/∂p  [N,3,3]
         dLcolor_dp,
-        context.H_mean2d_dp, // ∂²π/∂p² [N,2,3,3]
         H_Lcolor_dp,
-        context.H_Sigma_dp, // ∂²Σ/∂p² [N,3,3]
         dSigma_dtheta,
         H_Sigma_dtheta,
         quats,
@@ -175,10 +162,19 @@ void local_newton_backward(
     std::cout << "dL_d_pos_result norm: " << dL_d_pos_result.norm().item<float>() << std::endl;
     std::cout << "H_L_pos_result norm: " << H_L_pos_result.norm().item<float>() << std::endl;
 
-    context.dL_d_pos      = std::get<0>(newton_systems);
-    context.H_L_pos       = std::get<1>(newton_systems);
-    context.dL_d_scale    = std::get<2>(newton_systems);
-    context.H_L_scale     = std::get<3>(newton_systems);
+
+    // sum the paths related to view dependent color and to G/vis
+    context.dL_d_pos      = dL_d_pos_result + dLcolor_dp;
+    context.H_L_pos       = H_L_pos_result  + H_Lcolor_dp;
+    auto dL_dscale_result    = std::get<2>(newton_systems);
+    auto H_L_dscale_result     = std::get<3>(newton_systems);
+    std::cout << "dL_d_pos_result NaN: " << torch::isnan(dL_dscale_result).any().item<bool>() << std::endl;
+    std::cout << "H_L_pos_result NaN: " << torch::isnan(H_L_dscale_result).any().item<bool>() << std::endl;
+    std::cout << "dL_d_pos_result norm: " << dL_dscale_result.norm().item<float>() << std::endl;
+    std::cout << "H_L_pos_result norm: " << H_L_dscale_result.norm().item<float>() << std::endl;
+
+    context.dL_d_scale  = dL_dscale_result;
+    context.H_L_scale   = H_L_dscale_result;
     context.dL_d_rot      = std::get<4>(newton_systems);
     context.H_L_rot       = std::get<5>(newton_systems);
     //context.dL_d_color    = std::get<6>(newton_systems);
@@ -226,6 +222,7 @@ void solve_and_update(
     const auto dL_d_color = context.dL_d_color;
     const auto H_L_color = context.H_L_color;
     const auto d_mean2d_dp = context.d_mean2d_dp;
+    const auto radii = context.radii;
     //const auto T_matrices = context.T_matrices;
     const auto view_dirs = context.view_dirs;
     const auto T_matrices = context.T_matrices;
@@ -242,6 +239,7 @@ void solve_and_update(
     CHECK_INPUT(d_mean2d_dp);
     CHECK_INPUT(T_matrices);
     CHECK_INPUT(view_dirs);
+    CHECK_INPUT(radii);
 
     // Check for singular matrices
     auto H_pos_det = H_L_pos.det();
@@ -261,6 +259,7 @@ void solve_and_update(
         d_mean2d_dp, // Basis U_k is implicitly defined by this jacobian
         T_matrices,
         view_dirs,
+        radii,
         means, scales, quats, opacities, sh_coeffs // Pass by reference to update in-place
     );
 }

@@ -599,13 +599,13 @@ mat3 compute_H_L_p_local(
     return H;
 }
 
-
 /**
  * @brief Kernel 1: Position derivatives with proper basis transformation
+ * Now also outputs dSigma_dp for use by scale kernel
  */
 __global__ void compute_position_derivatives_kernel(
     const int num_gaussians,
-const vec3 *__restrict__ dL_dG_totals,
+    const vec3 *__restrict__ dL_dG_totals,
     const vec2 *__restrict__ dL_dmean2d,
     const vec3 *__restrict__ dL_dSigma_totals,        // Changed: now pre-converted
     const vec3 *__restrict__ H_L_mean2d,
@@ -615,12 +615,12 @@ const vec3 *__restrict__ dL_dG_totals,
     const mat3 *__restrict__ Ks,
     const mat3 *__restrict__ covars,
     const int32_t* __restrict__ radii,
-//    const vec3 *__restrict__ dL_dc,
-//    const vec3 *__restrict__ d2L_dc2,
     const vec3 *__restrict__ campos,
     // OUTPUTS:
     vec2 *__restrict__ d_L_vk,
-    mat2 *__restrict__ H_L_vk
+    mat2 *__restrict__ H_L_vk,
+    // NEW OUTPUT for scale kernel:
+    float *__restrict__ dSigma_dp_out        // [N * 12] - packed dSigma/dp matrices
 ) {
     const int g_idx = blockIdx.x * blockDim.x + threadIdx.x;
     if (g_idx >= num_gaussians) return;
@@ -634,21 +634,9 @@ const vec3 *__restrict__ dL_dG_totals,
     const float* H_L_sigma = H_L_sigma_totals + g_idx * 6;
     const float* H_L_mixed = H_L_mixed_totals + g_idx * 6;
 
-    // Rest of the kernel logic remains exactly the same...
-    constexpr int DS_STRIDE = 4*3;
-    int base_S = g_idx * DS_STRIDE;
-    int base_Hm = g_idx * 18;
-
-    mat2 H_Sigma_pxx = glm::make_mat2(&H_Sigma_dp[base_S + 0]);
-    mat2 H_Sigma_pxy = glm::make_mat2(&H_Sigma_dp[base_S + 4]);
-    mat2 H_Sigma_pyy = glm::make_mat2(&H_Sigma_dp[base_S + 8]);
-
-    //mat3 H_pi_px = glm::make_mat3(&H_mean2d_dp[base_Hm + 0]);
-    //mat3 H_pi_py = glm::make_mat3(&H_mean2d_dp[base_Hm + 9]);
-
     vec3 splat_pos = p_k[g_idx];
     mat3 K = Ks[g_idx];
-    mat3 covar = covars[g_idx];
+    mat3 covar = glm::transpose(covars[g_idx]); // because QuatScaleToCovar transposes in row major
 
     // Construct orthonormal basis
     vec3 r_k = normalize(camera_pos - splat_pos);
@@ -665,37 +653,38 @@ const vec3 *__restrict__ dL_dG_totals,
     mat2x3 U_k = {u_x, u_y};
 
     // Compute derivatives w.r.t. position
-    const vec2 dL_dpi    = dL_dmean2d   [g_idx];
-    // load your 2×2/2×3/3×3 blocks at (π,Σ) level:
-    mat2   H_pi_pi     = mat2( H_L_mean2d[g_idx].x, H_L_mean2d[g_idx].y,
-                            H_L_mean2d[g_idx].y, H_L_mean2d[g_idx].z );
-    // assume you have
-    const float* Hmix = H_L_mixed + 6*g_idx;  // [HπxΣ11, HπyΣ11, HπxΣ22, HπxΣ12, HπyΣ12, HπyΣ22]
-    const float* Hc   = H_L_sigma + 6*g_idx;  // [HΣ11Σ11, HΣ22Σ22, HΣ11Σ22, HΣ11Σ12, HΣ12Σ22, HΣ12Σ12]
+    const vec2 dL_dpi = dL_dmean2d[g_idx];
 
-    // --- unpack H_{πΣ} (2×3) into mat3x2 (3 cols,2 rows) ---
+    // Load Hessian blocks
+    mat2 H_pi_pi = mat2(H_L_mean2d[g_idx].x, H_L_mean2d[g_idx].y,
+                        H_L_mean2d[g_idx].y, H_L_mean2d[g_idx].z);
+
+    const float* Hmix = H_L_mixed + 6*g_idx;
+    const float* Hc = H_L_sigma + 6*g_idx;
+
+    // Unpack H_{πΣ} (2×3) into mat3x2 (3 cols, 2 rows)
     mat3x2 H_pi_Sigma;
     H_pi_Sigma[0][0] = Hmix[0];  // ∂²L/∂πₓ∂Σ₁₁
     H_pi_Sigma[0][1] = Hmix[1];  // ∂²L/∂π_y∂Σ₁₁
-
     H_pi_Sigma[1][0] = Hmix[3];  // ∂²L/∂πₓ∂Σ₁₂
     H_pi_Sigma[1][1] = Hmix[4];  // ∂²L/∂π_y∂Σ₁₂
-
     H_pi_Sigma[2][0] = Hmix[2];  // ∂²L/∂πₓ∂Σ₂₂
     H_pi_Sigma[2][1] = Hmix[5];  // ∂²L/∂π_y∂Σ₂₂
 
-    // --- unpack H_{ΣΣ} (3×3) into mat3 ---
-    //   index mapping: [0]=(Σ₁₁,Σ₁₁), [1]=(Σ₂₂,Σ₂₂), [2]=(Σ₁₁,Σ₂₂),
-    //                  [3]=(Σ₁₁,Σ₁₂), [4]=(Σ₁₂,Σ₂₂), [5]=(Σ₁₂,Σ₁₂)
+    // Unpack H_{ΣΣ} (3×3) into mat3
     mat3 H_Sigma_Sigma;
-
-    // col 0 = deriv w.r.t. Σ₁₁
-    H_Sigma_Sigma[0][0] = Hc[0]; // (0,0)
-    H_Sigma_Sigma[0][1] = Hc[3]; // (1,0)
-    H_Sigma_Sigma[0][2] = Hc[2]; // (2,0)
+    H_Sigma_Sigma[0][0] = Hc[0]; // (Σ₁₁,Σ₁₁)
+    H_Sigma_Sigma[0][1] = Hc[3]; // (Σ₂₂,Σ₁₁)
+    H_Sigma_Sigma[0][2] = Hc[2]; // (Σ₁₂,Σ₁₁)
+    H_Sigma_Sigma[1][0] = Hc[3];
+    H_Sigma_Sigma[1][1] = Hc[5];
+    H_Sigma_Sigma[1][2] = Hc[4];
+    H_Sigma_Sigma[2][0] = Hc[2];
+    H_Sigma_Sigma[2][1] = Hc[4];
+    H_Sigma_Sigma[2][2] = Hc[1];
 
     // Pinhole projection derivatives and hessians
-    const float rz = 1.f / splat_pos.z, rz2 = rz*rz, rz3 = rz2 * rz;
+    const float rz = 1.f / splat_pos.z, rz2 = rz*rz, rz3 = rz2 * rz, rz4 = rz3 * rz;
     const float fx = K[0][0], fy = K[1][1];
     mat3x2 J(
         fx * rz, 0.f,
@@ -718,90 +707,61 @@ const vec3 *__restrict__ dL_dG_totals,
     mat2 dSigma_dpy = (fy * rz2) * mat2(0.f, -s_xz, -s_xz, -2.f * s_yz);
 
     float A = fx * (splat_pos.x*s_xz + splat_pos.y*s_yz + splat_pos.z*s_zz);
-    float B = fy * (splaT_pos.x*s_xy + splat_pos.y*s_yy + splat_pos.z*s_yz);
+    float B = fy * (splat_pos.x*s_xy + splat_pos.y*s_yy + splat_pos.z*s_yz);
     mat2 dS_dz;
     dS_dz[0][0] = 2.f * (fx * s_xz + A * fx * splat_pos.x * rz2);
-    dS_dz[1][1] = 2.f * (fy * s_yz + B * fy * splaT_pos.y * rz2);
-    dS_dz[0][1] = dS_dz[1][0] = (fx*s_yz + fy*s_xz + A*fx*splat_pos.y*rz2 + B*fy*splaT_pos.x*rz2);
+    dS_dz[1][1] = 2.f * (fy * s_yz + B * fy * splat_pos.y * rz2);
+    dS_dz[0][1] = dS_dz[1][0] = (fx*s_yz + fy*s_xz + A*fx*splat_pos.y*rz2 + B*fy*splat_pos.x*rz2);
     mat2 dSigma_dpz = -rz2 * dS_dz;
 
-   glm::mat3x2 dJdx(
-    // col0       col1       col2
-      0.f,        0.f,   -fx * rz2,   // row0
-      0.f,        0.f,         0.f    // row1
+    // Compute Hessian matrices for position derivatives
+    glm::mat3x2 dJdx(
+        0.f,        0.f,   -fx * rz2,
+        0.f,        0.f,         0.f
     );
     glm::mat3x2 dJdy(
-        0.f,        0.f,        0.f,    // row0
-        0.f,        0.f,  -fy * rz2     // row1
+        0.f,        0.f,        0.f,
+        0.f,        0.f,  -fy * rz2
     );
     glm::mat3x2 dJdz(
-    -fx * rz2,     0.f,   2.f * fx * x * rz3,   // row0
-        0.f,  -fy * rz2,   2.f * fy * y * rz3    // row1
+        -fx * rz2,     0.f,   2.f * fx * splat_pos.x * rz3,
+        0.f,  -fy * rz2,   2.f * fy * splat_pos.y * rz3
     );
 
-    // 2) Build the three mixed 2nd‑derivatives ∂²_{kℓ}J:
     glm::mat3x2 d2Jdxz(
-        0.f,        0.f,    2.f * fx * rz3,   // row0
-        0.f,        0.f,          0.f        // row1
+        0.f,        0.f,    2.f * fx * rz3,
+        0.f,        0.f,          0.f
     );
     glm::mat3x2 d2Jdyz(
-        0.f,        0.f,          0.f,        // row0
-        0.f,        0.f,   2.f * fy * rz3     // row1
+        0.f,        0.f,          0.f,
+        0.f,        0.f,   2.f * fy * rz3
     );
     glm::mat3x2 d2Jdzz(
-    2.f * fx * rz3,    0.f,   -6.f * fx * x * rz4,   // row0
-            0.f,   2.f * fy * rz3,  -6.f * fy * y * rz4  // row1
+        2.f * fx * rz3,    0.f,   -6.f * fx * splat_pos.x * rz4,
+        0.f,   2.f * fy * rz3,  -6.f * fy * splat_pos.y * rz4
     );
 
-    // 3) Now compute each of the six 2×2 Hessian‑blocks
-    //    using H_{kl} = (∂²_{kl}J) Σ Jᵀ  + (∂ₖJ) Σ (∂_ℓJ)ᵀ
-    //                  + (∂_ℓJ) Σ (∂ₖJ)ᵀ +  J Σ (∂²_{kl}J)ᵀ
-
-    // xx:
     glm::mat2 H_Sigma_pxx = 2.f * (dJdx * covar * glm::transpose(dJdx));
-
-    // yy:
     glm::mat2 H_Sigma_pyy = 2.f * (dJdy * covar * glm::transpose(dJdy));
-
-    // xy (same as yx):
-    glm::mat2 H_Sigma_pxy =
-        dJdx * covar * glm::transpose(dJdy)
-    + dJdy * covar * glm::transpose(dJdx);
-
-    // xz (same as zx):
-    glm::mat2 H_Sigma_pxz =
-        d2Jdxz * covar * glm::transpose(J)
-    + dJdx   * covar * glm::transpose(dJdz)
-    + dJdz   * covar * glm::transpose(dJdx)
-    + J      * covar * glm::transpose(d2Jdxz);
-
-    // yz (same as zy):
-    glm::mat2 H_Sigma_pyz =
-        d2Jdyz * covar * glm::transpose(J)
-    + dJdy   * covar * glm::transpose(dJdz)
-    + dJdz   * covar * glm::transpose(dJdy)
-    + J      * covar * glm::transpose(d2Jdyz);
-
-    // zz:
-    glm::mat2 H_Sigma_pzz =
-        d2Jdzz * covar * glm::transpose(J)
-    + 2.f * (dJdz * covar * glm::transpose(dJdz))
-    + J      * covar * glm::transpose(d2Jdzz);
+    glm::mat2 H_Sigma_pxy = dJdx * covar * glm::transpose(dJdy) + dJdy * covar * glm::transpose(dJdx);
+    glm::mat2 H_Sigma_pxz = d2Jdxz * covar * glm::transpose(J) + dJdx * covar * glm::transpose(dJdz) + dJdz * covar * glm::transpose(dJdx) + J * covar * glm::transpose(d2Jdxz);
+    glm::mat2 H_Sigma_pyz = d2Jdyz * covar * glm::transpose(J) + dJdy * covar * glm::transpose(dJdz) + dJdz * covar * glm::transpose(dJdy) + J * covar * glm::transpose(d2Jdyz);
+    glm::mat2 H_Sigma_pzz = d2Jdzz * covar * glm::transpose(J) + 2.f * (dJdz * covar * glm::transpose(dJdz)) + J * covar * glm::transpose(d2Jdzz);
 
     // Position gradient computation
-    vec3 final_grad    = compute_dL_dpk_local(
+    vec3 final_grad = compute_dL_dpk_local(
         dL_dpi, dL_dSigma,
         J,
         dSigma_dpx, dSigma_dpy, dSigma_dpz
     );
 
-    // Position Hessian computation
+    // Position Hessian computation (note: fixed the function call to match the signature)
     mat3 final_hessian = compute_H_L_p_local(
-        dL_dpi, dL_dSigma,
+        dL_dpi, dL_dSigma.x, dL_dSigma.y, dL_dSigma.z,
+        0.f, 0.f, 0.f,  // Assuming these are zero for 2D case
         H_pi_pi, H_pi_Sigma, H_Sigma_Sigma,
-        J,
+        J, H_pi_px, H_pi_py,
         dSigma_dpx, dSigma_dpy, dSigma_dpz,
-        H_pi_px, H_pi_py,
         H_Sigma_pxx, H_Sigma_pxy, H_Sigma_pyy,
         H_Sigma_pxz, H_Sigma_pyz, H_Sigma_pzz
     );
@@ -813,12 +773,34 @@ const vec3 *__restrict__ dL_dG_totals,
         dot(U_k[1], final_hessian * U_k[0]), dot(U_k[1], final_hessian * U_k[1])
     );
 
-    //vec2 dL_dv;
-    //mat2 H_v;
-    //chain_attribute(dL_dc[g_idx], d2L_dc2[g_idx], dc_dvk, d2c_dvk2, dL_dv, H_v);
+    // Store main outputs
     d_L_vk[g_idx] = dL_dv;
     H_L_vk[g_idx] = H_v;
+
+    // NEW: Store dSigma_dp for scale kernel
+    // Pack dSigma_dp: 12 floats per Gaussian (3 mat2 matrices = 3 * 4 floats)
+    const int base_idx = g_idx * 12;
+    float* dSigma_dp_ptr = &dSigma_dp_out[base_idx];
+
+    // Store dSigma_dpx (4 floats)
+    dSigma_dp_ptr[0] = dSigma_dpx[0][0];
+    dSigma_dp_ptr[1] = dSigma_dpx[0][1];
+    dSigma_dp_ptr[2] = dSigma_dpx[1][0];
+    dSigma_dp_ptr[3] = dSigma_dpx[1][1];
+
+    // Store dSigma_dpy (4 floats)
+    dSigma_dp_ptr[4] = dSigma_dpy[0][0];
+    dSigma_dp_ptr[5] = dSigma_dpy[0][1];
+    dSigma_dp_ptr[6] = dSigma_dpy[1][0];
+    dSigma_dp_ptr[7] = dSigma_dpy[1][1];
+
+    // Store dSigma_dpz (4 floats)
+    dSigma_dp_ptr[8] = dSigma_dpz[0][0];
+    dSigma_dp_ptr[9] = dSigma_dpz[0][1];
+    dSigma_dp_ptr[10] = dSigma_dpz[1][0];
+    dSigma_dp_ptr[11] = dSigma_dpz[1][1];
 }
+
 
 /**
  * @brief Performs an analytical eigenvalue decomposition for a 2x2 symmetric matrix.
@@ -882,6 +864,9 @@ mat3 unpack_H_SigmaSigma(const float* Hc) {
 }
 
 
+/**
+ * @brief Kernel 2: Scale derivatives (now receives dSigma_dp from position kernel)
+ */
 __global__ void compute_scale_derivatives_kernel(
     const int   num_gaussians,
     const int32_t* __restrict__ radii,
@@ -891,9 +876,8 @@ __global__ void compute_scale_derivatives_kernel(
     // — geometry inputs (unchanged) —
     const float* __restrict__ viewmats,          // [C×16]
     const float* __restrict__ quats,             // [N×4]
-    const mat3x2* __restrict__ jacobians,        // [N]
     const vec3*   __restrict__ conics_2d,        // [N] vec3{Σ₁₁,Σ₁₂,Σ₂₂}
-    const float* __restrict__ dSigma_dp,
+    const float* __restrict__ dSigma_dp,         // [N*12] - now passed from position kernel
     // — outputs —
     vec2*  __restrict__ dL_dlambda,  // [N]
     mat2*  __restrict__ H_L_dlambda,   // [N]
@@ -902,17 +886,20 @@ __global__ void compute_scale_derivatives_kernel(
     int g_idx = blockIdx.x * blockDim.x + threadIdx.x;
     if (g_idx >= num_gaussians) return;
     if (radii[g_idx*2] <= 0 || radii[g_idx*2 + 1] <= 0) return;
+
     // 1) load the loss-space gradient & Hessian‐block
     vec3 L_Sigma = dL_dSigma_totals[g_idx];
     const float* Hc = H_L_conic_totals + g_idx*6;
     mat3  H_SigmaSigma = unpack_H_SigmaSigma(Hc);
-    constexpr int STRIDE_DS = 3*4;
+
+    // Load dSigma_dp (now passed from position kernel)
+    constexpr int STRIDE_DS = 12;  // 3 * 4 floats per Gaussian
     int base_S = g_idx * STRIDE_DS;
-    int base_Hm = g_idx * 18;
 
     mat2 dSigma_dpx = glm::make_mat2(&dSigma_dp[base_S + 0]);
     mat2 dSigma_dpy = glm::make_mat2(&dSigma_dp[base_S + 4]);
     mat2 dSigma_dpz = glm::make_mat2(&dSigma_dp[base_S + 8]);
+
     // 2) eigen‑decompose Σ
     vec3 cov = conics_2d[g_idx];     // {Σ₁₁, Σ₁₂, Σ₂₂}
     float λmin, λmax;
@@ -943,9 +930,8 @@ __global__ void compute_scale_derivatives_kernel(
         dSigma_dpz[1][1]
       )
     };
-    // -----------------------------------------------------------------
+
     // E2 coefficients: how λₘᵢₙ/ₘₐₓ depend on the 3 diag‑entries
-    // -----------------------------------------------------------------
     float a1 = vmin.x*vmin.x,
           b1 = 2.f*vmin.x*vmin.y,
           c1 = vmin.y*vmin.y;
@@ -960,7 +946,7 @@ __global__ void compute_scale_derivatives_kernel(
                    + c2 * J_proj[2];
     T_matrices[g_idx] = glm::mat2x3(col0, col1);
 
-    // 3) build the two “direction” vectors gₘᵢₙ, gₘₐₓ in the flattened Σ→ℝ³
+    // 3) build the two "direction" vectors gₘᵢₙ, gₘₐₓ in the flattened Σ→ℝ³
     vec3 g_min = { vmin.x*vmin.x,
                    vmin.y*vmin.y,
                    2.f*vmin.x*vmin.y };
@@ -1121,23 +1107,19 @@ void launch_assemble_derivatives_kernels(
     const at::Tensor H_L_mean2d_totals,
     const at::Tensor H_L_conic_totals,
     const at::Tensor H_L_mixedinv_totals,
-    const at::Tensor jacobians,
-    const at::Tensor dSigma_dp,
-    const at::Tensor H_mean2d_dp,
-    const at::Tensor H_Sigma_dp,
+    // REMOVED: jacobians, dSigma_dp, H_Sigma_dp (no longer needed as inputs)
     const at::Tensor p_k,
     const at::Tensor dSigma_dtheta,
     const at::Tensor H_Sigma_dtheta,
     // OUTPUTS:
     at::Tensor d_L_vk, // [N, 2]
-    at::Tensor H_L_vk, // // [N, 3]
+    at::Tensor H_L_vk, // [N, 3]
     at::Tensor dL_dlambda,  // [N]
     at::Tensor H_L_dlambda,   // [N]
     at::Tensor dL_dtheta, // [N]
     at::Tensor d2L_dtheta2, // [N]
     at::Tensor dL_dcoeffs,  // Output: ∂L / ∂c_k as a vec3 [N, num_sh_coeffs]
     at::Tensor H_L_dcoeffs, // Output: Diagonal of ∂²L / ∂c_k² [N, num_sh_coeffs]
-    // opacity hessians and gradients are compute directly from rasterizaiton backward pass
     // temporary outputs
     at::Tensor dL_dSigma,
     at::Tensor H_L_sigma,
@@ -1146,6 +1128,10 @@ void launch_assemble_derivatives_kernels(
 ) {
     const int threads = 256;
     const int blocks = (num_gaussians + threads - 1) / threads;
+
+    // Create temporary tensor for dSigma_dp
+    auto options = at::TensorOptions().dtype(at::kFloat).device(at::kCUDA);
+    at::Tensor dSigma_dp_temp = at::empty({num_gaussians * 12}, options); // 12 floats per Gaussian
 
     // STEP 1: Convert all inverse derivatives once
     convert_inverse_derivatives_kernel<<<blocks, threads, 0, at::cuda::getCurrentCUDAStream()>>>(
@@ -1160,7 +1146,7 @@ void launch_assemble_derivatives_kernels(
     );
     C10_CUDA_KERNEL_LAUNCH_CHECK();
 
-    // STEP 2: Launch the optimized kernels that use pre-converted derivatives
+    // STEP 2: Position derivatives kernel (now outputs dSigma_dp)
     compute_position_derivatives_kernel<<<blocks, threads, 0, at::cuda::getCurrentCUDAStream()>>>(
         num_gaussians,
         reinterpret_cast<const vec3*>(dL_dG_totals.data_ptr<float>()),
@@ -1175,27 +1161,32 @@ void launch_assemble_derivatives_kernels(
         radii.data_ptr<int32_t>(),
         reinterpret_cast<const vec3*>(campos.data_ptr<float>()),
         reinterpret_cast<vec2*>(d_L_vk.data_ptr<float>()),
-        reinterpret_cast<mat2*>(H_L_vk.data_ptr<float>())
+        reinterpret_cast<mat2*>(H_L_vk.data_ptr<float>()),
+        // NEW: output for scale kernel
+        dSigma_dp_temp.data_ptr<float>()
     );
     C10_CUDA_KERNEL_LAUNCH_CHECK();
 
+    // STEP 3: Scale derivatives kernel (uses dSigma_dp from position kernel)
     compute_scale_derivatives_kernel<<<blocks, threads, 0, at::cuda::getCurrentCUDAStream()>>>(
         num_gaussians,
+        radii.data_ptr<int32_t>(),
         reinterpret_cast<const vec3*>(dL_dSigma.data_ptr<float>()),
         H_L_sigma.data_ptr<float>(),
         viewmats.data_ptr<float>(),
         quats.data_ptr<float>(),
-        reinterpret_cast<const mat3x2*>(jacobians.data_ptr<float>()),
         reinterpret_cast<const vec3*>(conics_2d.data_ptr<float>()),
-        dSigma_dp.data_ptr<float>(),
+        dSigma_dp_temp.data_ptr<float>(),
         reinterpret_cast<vec2*>(dL_dlambda.data_ptr<float>()),
         reinterpret_cast<mat2*>(H_L_dlambda.data_ptr<float>()),
         reinterpret_cast<mat2x3*>(T_matrices.data_ptr<float>())
     );
     C10_CUDA_KERNEL_LAUNCH_CHECK();
 
+    // STEP 4: Rotation derivatives kernel (unchanged)
     compute_rotation_derivatives_kernel<<<blocks, threads, 0, at::cuda::getCurrentCUDAStream()>>>(
         num_gaussians,
+        radii.data_ptr<int32_t>(),
         dL_dG_totals.data_ptr<float>(),
         reinterpret_cast<const vec3*>(dL_dSigma.data_ptr<float>()),
         H_L_sigma.data_ptr<float>(),
@@ -1208,6 +1199,5 @@ void launch_assemble_derivatives_kernels(
 
     // The opacity and color kernels don't need the conversion, so they remain unchanged
 }
-
 } // namespace gsplat_newton
 

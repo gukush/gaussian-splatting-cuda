@@ -446,14 +446,13 @@ assemble_derivatives_split(
     const at::Tensor H_L_mean2d_totals,
     const at::Tensor H_L_conic_totals,
     const at::Tensor H_L_mixedinv_totals,
-    // Projection derivatives
-    const at::Tensor jacobians,
+    const at::Tensor radii,
+    const at::Tensor Ks,
+    const at::Tensor covars,
     const at::Tensor viewmat,
-    const at::Tensor dSigma_dp,
     const at::Tensor dc_sh_dp,
     const at::Tensor H_mean2d_dp,
     const at::Tensor H_c_sh_p,
-    const at::Tensor H_Sigma_dp,
     const at::Tensor dSigma_dtheta_inputs,
     const at::Tensor H_Sigma_dtheta_inputs,
     const at::Tensor quats,
@@ -482,17 +481,22 @@ assemble_derivatives_split(
     auto H_L_mixed = torch::empty({num_gaussians, 6}, options);
     // T_k matrix is of size 2x3
     auto T_matrices = torch::empty({num_gaussians, 2, 3}, options);
+    /*
     TORCH_CHECK(dSigma_dp.sizes()[1] == num_gaussians &&
                 dSigma_dp.sizes()[2] == 3 &&
                 dSigma_dp.sizes()[3] == 2 &&
                 dSigma_dp.sizes()[4] == 2,
             "Expected dimensions of dSigm_dp to be [N, 3, 2, 2]");
-    // Launch split kernels
+    */
+            // Launch split kernels
         launch_assemble_derivatives_kernels(
             num_gaussians,
             conics_2d,
             camera_pos,
             viewmat,
+            radii,
+            Ks,
+            covars,
             quats,
             dL_dcSH_totals,
             dL_dG_totals,
@@ -501,10 +505,6 @@ assemble_derivatives_split(
             H_L_mean2d_totals,
             H_L_conic_totals,
             H_L_mixedinv_totals,
-            jacobians,
-            dSigma_dp,
-            H_mean2d_dp,
-            H_Sigma_dp,
             p_k,
             dSigma_dtheta_inputs,
             H_Sigma_dtheta_inputs,
@@ -526,127 +526,6 @@ assemble_derivatives_split(
                           dL_dtheta, H_L_dtheta,
                           dL_dcolor, H_L_dcolor, T_matrices);
 }
-
-/*
-
-torch::Tensor compute_y_updates(
-    const torch::Tensor grad_y,
-    const torch::Tensor hess_y,
-    const bool do_reg,
-    const float lambda,
-    const torch::Tensor yk
-) {
-    // Device and input checks
-    DEVICE_GUARD(grad_y);
-    CHECK_INPUT(grad_y);
-    CHECK_INPUT(hess_y);
-    CHECK_INPUT(yk);
-
-    const uint32_t n_isects = grad_y.size(0) / 2;
-    auto options = torch::TensorOptions()
-        .dtype(torch::kFloat32)
-        .device(grad_y.device());
-
-    // Create output tensor
-    auto delta_y = torch::zeros({n_isects, 2}, options);
-
-    // Launch kernel
-    launch_compute_y_updates_kernel(
-        n_isects,
-        grad_y.data_ptr<float>(),
-        hess_y.data_ptr<float>(),
-        do_reg,
-        lambda,
-        reinterpret_cast<const vec2*>(yk.data_ptr<float>()),
-        reinterpret_cast<vec2*>(delta_y.data_ptr<float>())
-    );
-
-    return delta_y;
-}
-*/
-
-/*
-void accumulate_y_2nd_order(
-    // MODIFIED: Changed masks to be optional for consistency
-    const at::optional<at::Tensor>& masks,
-    const uint32_t image_width,
-    const uint32_t image_height,
-    const uint32_t tile_size,
-    const at::Tensor tile_offsets,
-    const at::Tensor flatten_ids,
-    const at::Tensor last_ids,
-    const at::Tensor dL_dc,
-    const at::Tensor d2L_dc2,
-    const at::Tensor dcdy,
-    const at::Tensor d2cdy2,
-    at::Tensor grad_y,
-    at::Tensor hess_y
-) {
-    // Device and input checks
-    DEVICE_GUARD(dL_dc);
-    // MODIFIED: Check masks only if it has a value
-    if (masks.has_value()) {
-        CHECK_INPUT(masks.value());
-    }
-    CHECK_INPUT(tile_offsets);
-    CHECK_INPUT(flatten_ids);
-    CHECK_INPUT(last_ids);
-    CHECK_INPUT(dL_dc);
-    CHECK_INPUT(d2L_dc2);
-    CHECK_INPUT(dcdy);
-    CHECK_INPUT(d2cdy2);
-    CHECK_INPUT(grad_y);
-    CHECK_INPUT(hess_y);
-
-    const uint32_t C = tile_offsets.size(0);
-    const uint32_t tile_height = tile_offsets.size(1);
-    const uint32_t tile_width = tile_offsets.size(2);
-    const uint32_t n_isects = flatten_ids.size(0);
-    const bool packed = false; // Not used in this kernel
-    const uint32_t CDIM = dcdy.size(1);
-
-    dim3 threads = {tile_size, tile_size, 1};
-    dim3 grid = {C, tile_height, tile_width};
-
-    const uint32_t BS = tile_size * tile_size;
-    const size_t shmem_size =
-        BS * sizeof(int32_t) +      // id_batch
-        BS * CDIM * 2 * sizeof(float) + // dcdy_batch
-        BS * CDIM * 3 * sizeof(float);  // d2cdy2_batch
-
-#define LAUNCH_ACCUMULATE_KERNEL(CHANNELS) \
-    launch_accumulate_y_2nd_order_kernel<CHANNELS>( \
-        C, n_isects, packed, \
-        masks.has_value() ? masks.value().data_ptr<bool>() : nullptr, \
-        image_width, image_height, tile_size, tile_width, tile_height, \
-        tile_offsets, \
-        flatten_ids, \
-        last_ids, \
-        dL_dc, \
-        d2L_dc2, \
-        dcdy, \
-        d2cdy2, \
-        grad_y, \
-        hess_y, \
-        shmem_size \
-    ); \
-
-    switch (CDIM) {
-        case 1:
-            LAUNCH_ACCUMULATE_KERNEL(1)
-            break;
-        case 3:
-            LAUNCH_ACCUMULATE_KERNEL(3)
-            break;
-        // Add more cases as needed
-        default:
-            AT_ERROR("Unsupported channel dimension: ", CDIM);
-    }
-#undef LAUNCH_ACCUMULATE_KERNEL
-}
-
-*/
-
 // =====================
 // Losses
 // ====================
