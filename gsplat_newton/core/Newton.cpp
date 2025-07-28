@@ -288,10 +288,12 @@ void local_newton_backward(
     auto dL_sigma = std::get<10>(newton_systems);
     auto H_L_sigma = std::get<11>(newton_systems);
     auto H_L_mixed = std::get<12>(newton_systems);
+    /*
     dump_to_csv(dL_sigma,        "dL_sigma.csv");
     dump_to_csv(H_L_sigma,   "H_L_sigma.csv");
     dump_to_csv(H_L_mixed,    "H_L_mixed.csv");
-    assert(false && "Waiting for dump!");
+    */
+    //assert(false && "Waiting for dump!");
     // We will need to compute color derivatives separately or assume they are part of another tensor.
     // For now, creating placeholder tensors for color update.
     //context.dL_d_color = torch::zeros({means.size(0), 3}, means.options());
@@ -360,8 +362,16 @@ void solve_and_update(
     auto max_det = H_pos_det.max().item<float>();
     std::cout << "H_L_pos det range: [" << min_det << ", " << max_det << "]" << std::endl;
 
-    if (min_det < 1e-10f) {
-        std::cout << "WARNING: Nearly singular Hessian detected!" << std::endl;
+    if (min_det < 1e-13f) {
+        std::cout << "WARNING: Nearly singular pos Hessian detected!" << std::endl;
+    }
+    auto H_scale_det = H_L_scale.det();
+    min_det = H_scale_det.min().item<float>();
+    max_det = H_scale_det.max().item<float>();
+    std::cout << "H_L_scale det range: [" << min_det << ", " << max_det << "]" << std::endl;
+
+    if (min_det < 1e-13f) {
+        std::cout << "WARNING: Nearly singular scale Hessian detected!" << std::endl;
     }
     launch_solve_and_update_all_attributes_kernel(
         dL_d_pos, H_L_pos,

@@ -101,7 +101,8 @@ __global__ void debug_derivatives_kernel(
  * @param conic_2d The 2D covariance matrix as vec3 {Σ_{00}, Σ_{11}, Σ_{01}}
  * @return mat2 The inverse covariance matrix Σ^{-1}
  */
-__device__ __forceinline__ mat2 compute_inverse_covariance_2d(const vec3& conic_2d) {
+/*
+ __device__ __forceinline__ mat2 compute_inverse_covariance_2d(const vec3& conic_2d) {
     const float det = conic_2d.x * conic_2d.y - conic_2d.z * conic_2d.z;
 
     // Check for near-singular matrix
@@ -110,14 +111,12 @@ __device__ __forceinline__ mat2 compute_inverse_covariance_2d(const vec3& conic_
         const float reg = 1e-4f;
         const float reg_det = (conic_2d.x + reg) * (conic_2d.y + reg) - conic_2d.z * conic_2d.z;
         const float inv_det = 1.0f / reg_det;
-
         mat2 Sigma_inv;
         Sigma_inv[0][0] = (conic_2d.y + reg) * inv_det;
         Sigma_inv[1][1] = (conic_2d.x + reg) * inv_det;
         Sigma_inv[1][0] = Sigma_inv[0][1] = -conic_2d.z * inv_det;
         return Sigma_inv;
     }
-
     const float inv_det = 1.0f / det;
     mat2 Sigma_inv;
     Sigma_inv[0][0] = conic_2d.y * inv_det;
@@ -125,7 +124,79 @@ __device__ __forceinline__ mat2 compute_inverse_covariance_2d(const vec3& conic_
     Sigma_inv[1][0] = Sigma_inv[0][1] = -conic_2d.z * inv_det;
     return Sigma_inv;
 }
+*/
+__device__ __forceinline__ mat2 compute_inverse_covariance_2d(const vec3& Σ) {
+    // 1) choose a scale so that the largest |Σ_ij| becomes ~1
+    float scale = fmaxf(fmaxf(fabsf(Σ.x), fabsf(Σ.y)), fabsf(Σ.z));
+    if (scale < 1e-6f) scale = 1.0f;         // avoid divide-by‑zero if Σ is tiny
+    vec3   Σs = Σ / scale;                   // all components now in [–1,1] (roughly)
+    // 2) invert the scaled matrix
+    float dets = Σs.x * Σs.y - Σs.z * Σs.z;
+    // you can keep your existing reg‑fallback here on dets
+    float invdets = 1.0f / dets;
+    mat2  invs;
+    invs[0][0] =  Σs.y * invdets;
+    invs[1][1] =  Σs.x * invdets;
+    invs[0][1] = invs[1][0] = -Σs.z * invdets;
+    // 3) rescale back to the true inverse:
+    //    since Σs = Σ/scale  ⇒  Σs⁻¹ = scale * Σ⁻¹  ⇒  Σ⁻¹ = Σs⁻¹ / scale
+    return invs * (1.0f/scale);
+}
 
+
+__device__ __forceinline__ bool is_numerically_safe(float val) {
+    return isfinite(val) && fabsf(val) < 1e15f;
+}
+
+__device__ __forceinline__ float clamp_safe(float val, float max_abs = 1e12f) {
+    if (!isfinite(val)) return 0.0f;
+    return fmaxf(-max_abs, fminf(max_abs, val));
+}
+
+__device__ __forceinline__ mat2 compute_inverse_covariance_2d_robust(const vec3& Σ) {
+    // Compute condition number estimate
+    float trace = Σ.x + Σ.z;
+    float det = Σ.x * Σ.z - Σ.y * Σ.y;
+
+    // Regularization based on condition number
+    const float MIN_DET = 1e-10f;
+    const float MAX_COND = 1e6f;
+
+    if (det < MIN_DET || trace/det > MAX_COND) {
+        // Apply stronger regularization for ill-conditioned matrices
+        float reg = fmaxf(MIN_DET, trace * 1e-6f);
+        vec3 Σ_reg = Σ + vec3(reg, 0.f, reg);
+        det = Σ_reg.x * Σ_reg.z - Σ_reg.y * Σ_reg.y;
+
+        float inv_det = 1.0f / det;
+        mat2 Sigma_inv;
+        Sigma_inv[0][0] = Σ_reg.z * inv_det;
+        Sigma_inv[1][1] = Σ_reg.x * inv_det;
+        Sigma_inv[1][0] = Sigma_inv[0][1] = -Σ_reg.y * inv_det;
+        return Sigma_inv;
+    }
+
+    // Use scaled computation for numerical stability
+    float scale = fmaxf(fmaxf(fabsf(Σ.x), fabsf(Σ.z)), fabsf(Σ.y));
+    if (scale < 1e-12f) scale = 1.0f;
+
+    vec3 Σs = Σ / scale;
+    float dets = Σs.x * Σs.z - Σs.y * Σs.y;
+
+    // Additional check after scaling
+    if (fabsf(dets) < 1e-12f) {
+        float reg = 1e-8f;
+        dets = (Σs.x + reg) * (Σs.z + reg) - Σs.y * Σs.y;
+    }
+
+    float invdets = 1.0f / dets;
+    mat2 invs;
+    invs[0][0] = Σs.z * invdets;
+    invs[1][1] = Σs.x * invdets;
+    invs[0][1] = invs[1][0] = -Σs.y * invdets;
+
+    return invs * (1.0f/scale);
+}
 
 /**
  * @brief Converts mixed partial derivatives from inverse covariance to covariance
@@ -400,7 +471,7 @@ __device__ __forceinline__ void convert_all_inverse_derivatives(
     float* H_G_mixed
 ) {
     // Compute inverse covariance matrix
-    mat2 Sigma_inv = compute_inverse_covariance_2d(conic_2d);
+    mat2 Sigma_inv = compute_inverse_covariance_2d_robust(conic_2d);
 
     // Convert first derivative
     dG_dSigma = convert_first_derivative_inverse_to_covariance(dG_dSinv, Sigma_inv);
@@ -682,6 +753,265 @@ mat3 compute_H_L_p_local(
     return H;
 }
 
+
+__device__ __forceinline__
+mat3 compute_H_L_p_local_safe(
+    // — first‐order weights —
+    const vec2&   dL_dpi,            // ∂L/∂π_u, ∂L/∂π_v
+    const float   dL_dSigma_xx,      // ∂L/∂Σ₁₁
+    const float   dL_dSigma_xy,      // ∂L/∂Σ₁₂
+    const float   dL_dSigma_yy,      // ∂L/∂Σ₂₂
+    const float   dL_dSigma_xz,      // ∂L/∂Σ₁₃
+    const float   dL_dSigma_yz,      // ∂L/∂Σ₂₃
+    const float   dL_dSigma_zz,      // ∂L/∂Σ₃₃
+
+    // — second‐order π‐blocks —
+    const mat2&   H_pi_pi,           // H_{ππ} (2×2)
+    const mat2x3& H_pi_Sigma,        // H_{πΣ} (2→Σ)
+    const mat3&   H_Sigma_Sigma,     // H_{ΣΣ} (Σ→Σ)
+    const mat3x2& J_pi,              // ∂π/∂p  (2×3)
+    const mat3&   H_pi2_px,          // ∂²π/∂p_x²  (3×3)
+    const mat3&   H_pi2_py,          // ∂²π/∂p_x∂p_y (3×3)
+
+    // — first‐order Σ‐blocks —
+    const mat2&   dSigma_dpx,        // ∂Σ/∂p_x  (2→plane)
+    const mat2&   dSigma_dpy,        // ∂Σ/∂p_y
+    const mat2&   dSigma_dpz,        // ∂Σ/∂p_z
+
+    // — second‐order Σ‐blocks
+    const mat3&   H_Sigma2_pxx,      // ∂²Σ/∂p_x²  (3×3)
+    const mat3&   H_Sigma2_pxy,      // ∂²Σ/∂p_x∂p_y
+    const mat3&   H_Sigma2_pyy,      // ∂²Σ/∂p_y²
+    const mat3&   H_Sigma2_pxz,      // ∂²Σ/∂p_x∂p_z
+    const mat3&   H_Sigma2_pyz,      // ∂²Σ/∂p_y∂p_z
+    const mat3&   H_Sigma2_pzz       // ∂²Σ/∂p_z²
+) {
+    const float MAX_FIRST_ORDER = 1e10f;
+    const float MAX_SECOND_ORDER = 1e10f;
+    const float MAX_HESSIAN_COMPONENT = 1e10f;
+
+    // Safety check on first-order terms
+    if (!is_numerically_safe(dL_dpi.x) || !is_numerically_safe(dL_dpi.y) ||
+        !is_numerically_safe(dL_dSigma_xx) || !is_numerically_safe(dL_dSigma_xy) ||
+        !is_numerically_safe(dL_dSigma_yy) || !is_numerically_safe(dL_dSigma_xz) ||
+        !is_numerically_safe(dL_dSigma_yz) || !is_numerically_safe(dL_dSigma_zz)) {
+        return mat3(0.0f); // Return zero Hessian for unsafe inputs
+    }
+
+    // Check magnitude of first-order terms
+    if (fabsf(dL_dpi.x) > MAX_FIRST_ORDER || fabsf(dL_dpi.y) > MAX_FIRST_ORDER ||
+        fabsf(dL_dSigma_xx) > MAX_FIRST_ORDER || fabsf(dL_dSigma_xy) > MAX_FIRST_ORDER ||
+        fabsf(dL_dSigma_yy) > MAX_FIRST_ORDER || fabsf(dL_dSigma_xz) > MAX_FIRST_ORDER ||
+        fabsf(dL_dSigma_yz) > MAX_FIRST_ORDER || fabsf(dL_dSigma_zz) > MAX_FIRST_ORDER) {
+        return mat3(0.0f); // Conservative fallback for extreme gradients
+    }
+
+    // Safety check on second-order Hessian inputs
+    auto check_matrix_safe = [](const mat3& m, float max_val) {
+        for (int i = 0; i < 3; ++i) {
+            for (int j = 0; j < 3; ++j) {
+                if (!is_numerically_safe(m[i][j]) || fabsf(m[i][j]) > max_val) {
+                    return false;
+                }
+            }
+        }
+        return true;
+    };
+
+    auto check_mat2_safe = [](const mat2& m, float max_val) {
+        for (int i = 0; i < 2; ++i) {
+            for (int j = 0; j < 2; ++j) {
+                if (!is_numerically_safe(m[i][j]) || fabsf(m[i][j]) > max_val) {
+                    return false;
+                }
+            }
+        }
+        return true;
+    };
+
+    // Check all matrix inputs
+    if (!check_mat2_safe(H_pi_pi, MAX_SECOND_ORDER) ||
+        !check_matrix_safe(H_Sigma_Sigma, MAX_SECOND_ORDER) ||
+        !check_matrix_safe(H_Sigma2_pxx, MAX_SECOND_ORDER) ||
+        !check_matrix_safe(H_Sigma2_pxy, MAX_SECOND_ORDER) ||
+        !check_matrix_safe(H_Sigma2_pyy, MAX_SECOND_ORDER) ||
+        !check_matrix_safe(H_Sigma2_pxz, MAX_SECOND_ORDER) ||
+        !check_matrix_safe(H_Sigma2_pyz, MAX_SECOND_ORDER) ||
+        !check_matrix_safe(H_Sigma2_pzz, MAX_SECOND_ORDER)) {
+        return mat3(0.0f); // Bail out if any matrix is problematic
+    }
+
+    // — build the little J_Sigma (3 Σ‐entries ← 3 p‐dims) with safety checks —
+    mat3 J_Sigma;
+    J_Sigma[0] = vec3(
+        clamp_safe(dSigma_dpx[0][0]),
+        clamp_safe(dSigma_dpy[0][0]),
+        clamp_safe(dSigma_dpz[0][0])
+    );
+    J_Sigma[1] = vec3(
+        clamp_safe(dSigma_dpx[1][1]),
+        clamp_safe(dSigma_dpy[1][1]),
+        clamp_safe(dSigma_dpz[1][1])
+    );
+    J_Sigma[2] = vec3(
+        clamp_safe(dSigma_dpx[0][1]),
+        clamp_safe(dSigma_dpy[0][1]),
+        clamp_safe(dSigma_dpz[0][1])
+    );
+
+    mat3 H(0.0f);
+
+    // 1) (∂π/∂p)ᵀ H_{ππ} (∂π/∂p) with overflow protection
+    for(int a=0; a<2; ++a) {
+        for(int b=0; b<2; ++b) {
+            float hij = H_pi_pi[a][b];
+            if (!is_numerically_safe(hij) || fabsf(hij) > MAX_SECOND_ORDER) {
+                continue; // Skip problematic terms
+            }
+
+            for(int i=0; i<3; ++i) {
+                for(int j=0; j<3; ++j) {
+                    float contribution = J_pi[i][a] * hij * J_pi[j][b];
+                    if (is_numerically_safe(contribution)) {
+                        H[i][j] += clamp_safe(contribution, MAX_HESSIAN_COMPONENT);
+                    }
+                }
+            }
+        }
+    }
+
+    // 2) 2*(∂π/∂p)ᵀ H_{πΣ} (∂Σ/∂p) with overflow protection
+    for(int a=0; a<2; ++a) {
+        for(int b=0; b<3; ++b) {
+            float hij = H_pi_Sigma[a][b];
+            if (!is_numerically_safe(hij) || fabsf(hij) > MAX_SECOND_ORDER) {
+                continue;
+            }
+
+            for(int i=0; i<3; ++i) {
+                for(int j=0; j<3; ++j) {
+                    float contribution = 2.f * J_pi[j][a] * hij * J_Sigma[b][i];
+                    if (is_numerically_safe(contribution)) {
+                        H[i][j] += clamp_safe(contribution, MAX_HESSIAN_COMPONENT);
+                    }
+                }
+            }
+        }
+    }
+
+    // 3) (∂Σ/∂p)ᵀ H_{ΣΣ} (∂Σ/∂p) with overflow protection
+    for(int a=0; a<3; ++a) {
+        for(int b=0; b<3; ++b) {
+            float hij = H_Sigma_Sigma[a][b];
+            if (!is_numerically_safe(hij) || fabsf(hij) > MAX_SECOND_ORDER) {
+                continue;
+            }
+
+            for(int i=0; i<3; ++i) {
+                for(int j=0; j<3; ++j) {
+                    float contribution = J_Sigma[a][j] * hij * J_Sigma[b][i];
+                    if (is_numerically_safe(contribution)) {
+                        H[i][j] += clamp_safe(contribution, MAX_HESSIAN_COMPONENT);
+                    }
+                }
+            }
+        }
+    }
+
+    // 4) intrinsic from ∂²π/∂p² weighted by ∂L/∂π with safety
+    for(int i=0; i<3; ++i) {
+        for(int j=0; j<3; ++j) {
+            float contrib_x = dL_dpi.x * H_pi2_px[i][j];
+            float contrib_y = dL_dpi.y * H_pi2_py[i][j];
+
+            if (is_numerically_safe(contrib_x) && is_numerically_safe(contrib_y)) {
+                H[i][j] += clamp_safe(contrib_x + contrib_y, MAX_HESSIAN_COMPONENT);
+            }
+        }
+    }
+
+    // 5) intrinsic from ∂²Σ/∂p² weighted by ∂L/∂Σ with safety
+    for(int i=0; i<3; ++i) {
+        for(int j=0; j<3; ++j) {
+            float total_contrib =
+                dL_dSigma_xx * H_Sigma2_pxx[i][j] +
+                dL_dSigma_xy * H_Sigma2_pxy[i][j] +
+                dL_dSigma_yy * H_Sigma2_pyy[i][j] +
+                dL_dSigma_xz * H_Sigma2_pxz[i][j] +
+                dL_dSigma_yz * H_Sigma2_pyz[i][j] +
+                dL_dSigma_zz * H_Sigma2_pzz[i][j];
+
+            if (is_numerically_safe(total_contrib)) {
+                H[i][j] += clamp_safe(total_contrib, MAX_HESSIAN_COMPONENT);
+            }
+        }
+    }
+
+    // Final safety check - ensure the entire Hessian is bounded
+    for(int i=0; i<3; ++i) {
+        for(int j=0; j<3; ++j) {
+            H[i][j] = clamp_safe(H[i][j], MAX_HESSIAN_COMPONENT);
+
+            // Ensure symmetry is preserved
+            if (i != j) {
+                H[j][i] = H[i][j];
+            }
+        }
+    }
+
+    // Check if the resulting Hessian is reasonable
+    float hessian_norm_sq = 0.0f;
+    for(int i=0; i<3; ++i) {
+        for(int j=0; j<3; ++j) {
+            hessian_norm_sq += H[i][j] * H[i][j];
+        }
+    }
+
+    if (!is_numerically_safe(hessian_norm_sq) || hessian_norm_sq > MAX_HESSIAN_COMPONENT * MAX_HESSIAN_COMPONENT * 9.0f) {
+        // If the Hessian is still too large, return a scaled-down identity-like matrix
+        float scale = fminf(1e6f, MAX_HESSIAN_COMPONENT / sqrtf(hessian_norm_sq + 1e-10f));
+        for(int i=0; i<3; ++i) {
+            for(int j=0; j<3; ++j) {
+                H[i][j] *= scale;
+            }
+        }
+    }
+
+    return H;
+}
+
+
+__device__ __forceinline__ vec3 compute_dL_dpk_local_safe(
+    const vec2& dL_dpi,         // { ∂L/∂π_x, ∂L/∂π_y }
+    const vec3& dL_dSigma,      // { ∂L/∂Σ₀₀, ∂L/∂Σ₀₁, ∂L/∂Σ₁₁ }
+    const mat3x2& J_pi,         // ∂π_k/∂p_k (2×3 Jacobian)
+    const mat2& dSigma_dpx,     // ∂Σ_k/∂p_x  (2×2)
+    const mat2& dSigma_dpy,     // ∂Σ_k/∂p_y
+    const mat2& dSigma_dpz      // ∂Σ_k/∂p_z
+) {
+    vec3 grad = vec3(0.0f);
+    // — chain through π_k —
+    //   grad[p] += ∂L/∂π_i * ∂π_i/∂p
+    grad.x += dL_dpi.x * J_pi[0][0] + dL_dpi.y * J_pi[0][1];
+    grad.y += dL_dpi.x * J_pi[1][0] + dL_dpi.y * J_pi[1][1];
+    grad.z += dL_dpi.x * J_pi[2][0] + dL_dpi.y * J_pi[2][1];
+
+    // — chain through Σ_k —
+    //   contract ∂L/∂Σ : ∂Σ/∂p  taking into account symmetry Σ₀₁==Σ₁₀
+    auto contractSigma = [&](const mat2& dS_dp){
+      return dL_dSigma.x * dS_dp[0][0]
+           + 2.0f         * dL_dSigma.y * dS_dp[1][0]
+           + dL_dSigma.z * dS_dp[1][1];
+    };
+    const float MAX_GRAD = 1e10f;
+    grad += vec3(
+      clamp_safe(contractSigma(dSigma_dpx),MAX_GRAD),
+      clamp_safe(contractSigma(dSigma_dpy),MAX_GRAD),
+      clamp_safe(contractSigma(dSigma_dpz),MAX_GRAD)
+    );
+    return grad;
+}
+
 /**
  * @brief Kernel 1: Position derivatives with proper basis transformation
  * Now also outputs dSigma_dp for use by scale kernel
@@ -824,12 +1154,12 @@ __global__ void compute_position_derivatives_kernel(
     glm::mat2 H_Sigma_pzz = d2Jdzz * covar_cam * glm::transpose(J) + 2.f * (dJdz * covar_cam * glm::transpose(dJdz)) +
                              J * covar_cam * glm::transpose(d2Jdzz);
 
-    vec3 grad_cam = compute_dL_dpk_local(
+    vec3 grad_cam = compute_dL_dpk_local_safe(
         dL_dpi, dL_dSigma, J,
         dSigma_dpx, dSigma_dpy, dSigma_dpz
     );
 
-    mat3 hessian_cam = compute_H_L_p_local(
+    mat3 hessian_cam = compute_H_L_p_local_safe(
         dL_dpi, dL_dSigma.x, dL_dSigma.y, dL_dSigma.z,
         0.f, 0.f, 0.f,
         H_pi_pi, H_pi_Sigma, H_Sigma_Sigma,
@@ -1073,9 +1403,10 @@ __global__ void compute_scale_derivatives_kernel(
 
     // Compute gradients w.r.t. eigenvalues
     vec2 grad_lambda;
-    grad_lambda.x = dot(L_Sigma, g_min);
-    grad_lambda.y = dot(L_Sigma, g_max);
-
+    const float MAX_GRADIENT = 1e10f;
+    grad_lambda.x = clamp_safe(dot(L_Sigma, g_min),MAX_GRADIENT);
+    grad_lambda.y = clamp_safe(dot(L_Sigma, g_max),MAX_GRADIENT);
+    const float MAX_HESSIAN = 1e10f;
     // Compute Hessian w.r.t. eigenvalues
     mat2 H_lambda;
     #pragma unroll
@@ -1092,7 +1423,7 @@ __global__ void compute_scale_derivatives_kernel(
                     sum += gi[p] * H_SigmaSigma[p][q] * gj[q];
                 }
             }
-            H_lambda[i][j] = sum;
+            H_lambda[i][j] = clamp_safe(sum, MAX_HESSIAN);
         }
     }
 
