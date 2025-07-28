@@ -6,6 +6,7 @@
 #include <ATen/TensorUtils.h>
 #include <c10/cuda/CUDAGuard.h>
 #include "core/splat_data.hpp"
+#include "Ops.h"
 
 namespace gsplat_newton {
 
@@ -112,6 +113,7 @@ void local_newton_backward(
 
     auto chained_outputs = chain_rule_color_position(
         means,
+        context.radii,
         context.campos, //camera_pos ??????
         dLcolor_dr,
         H_Lcolor_r
@@ -179,7 +181,8 @@ void local_newton_backward(
     context.H_L_rot       = std::get<5>(newton_systems);
     //context.dL_d_color    = std::get<6>(newton_systems);
     //context.H_L_color     = std::get<7>(newton_systems);
-    context.T_matrices    = std::get<8>(newton_systems);
+    context.U_k_bases     = std::get<8>(newton_systems);
+    context.T_matrices    = std::get<9>(newton_systems);
 
     // We will need to compute color derivatives separately or assume they are part of another tensor.
     // For now, creating placeholder tensors for color update.
@@ -221,11 +224,12 @@ void solve_and_update(
     const auto H_L_opacity = context.H_L_opacity;
     const auto dL_d_color = context.dL_d_color;
     const auto H_L_color = context.H_L_color;
-    const auto d_mean2d_dp = context.d_mean2d_dp;
+    //const auto d_mean2d_dp = context.d_mean2d_dp;
     const auto radii = context.radii;
     //const auto T_matrices = context.T_matrices;
     const auto view_dirs = context.view_dirs;
     const auto T_matrices = context.T_matrices;
+    const auto U_k_bases = context.U_k_bases;
     CHECK_INPUT(dL_d_pos);
     CHECK_INPUT(H_L_pos);
     CHECK_INPUT(dL_d_scale);
@@ -236,8 +240,9 @@ void solve_and_update(
     CHECK_INPUT(H_L_opacity);
     CHECK_INPUT(dL_d_color);
     CHECK_INPUT(H_L_color);
-    CHECK_INPUT(d_mean2d_dp);
+    //CHECK_INPUT(d_mean2d_dp);
     CHECK_INPUT(T_matrices);
+    CHECK_INPUT(U_k_bases);
     CHECK_INPUT(view_dirs);
     CHECK_INPUT(radii);
 
@@ -256,7 +261,7 @@ void solve_and_update(
         dL_d_rot, H_L_rot,
         dL_d_opacity, H_L_opacity,
         dL_d_color, H_L_color,
-        d_mean2d_dp, // Basis U_k is implicitly defined by this jacobian
+        U_k_bases,
         T_matrices,
         view_dirs,
         radii,

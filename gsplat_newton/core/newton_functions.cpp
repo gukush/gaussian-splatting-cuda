@@ -103,7 +103,7 @@ std::tuple<torch::Tensor, torch::Tensor, torch::Tensor> RasterizationFunctionFor
 
 
 
-
+/*
 std::tuple<
     at::Tensor,  // radii
     at::Tensor,  // means2d
@@ -178,18 +178,19 @@ ProjectionFunctionForward(
     auto scaled_scales = scales * scaling_modifier;
 
     // --- call your LN‐aware kernel ---
-    auto proj = gsplat_newton::projection_ewa_3dgs_fused_fwd_LN(
-        means3D,
-        /*covars=*/{}, /*quats=*/quats,
-        /*scales=*/scaled_scales,
-        /*opacities=*/opacities,
-        /*viewmats=*/viewmat,
-        /*Ks=*/K,
-        width, height,
-        eps2d, near_plane, far_plane, radius_clip,
-        /*calc_compensations=*/false,
-        gsplat::CameraModelType::PINHOLE
-    );
+    //auto proj = gsplat_newton::projection_ewa_3dgs_fused_fwd_LN(
+    //    means3D,
+    //    {}, // covars
+    //      quats,
+    //    scaled_scales,
+    //    opacities,
+    //    viewmat,
+    //    K,
+    //    width, height,
+    //    eps2d, near_plane, far_plane, radius_clip,
+    //    false, // calc_compensations
+    //    gsplat::CameraModelType::PINHOLE
+    //);
 
     // --- unpack and make contiguous ---
     auto radii        = std::get<0>(proj).contiguous();  // [C,N,2]
@@ -216,19 +217,20 @@ ProjectionFunctionForward(
     // you may compute view_dirs separately if needed
     // ----  ∂π/∂p  ----
     // kernel gave [C,N,3,2] (∂πᵧ/∂p, ∂πₓ/∂p]) so:
-    ctx.d_mean2d_dp = jacobians.permute({0,1,3,2});       // [C,N,2,3]
+
+    //ctx.d_mean2d_dp = jacobians.permute({0,1,3,2});       // [C,N,2,3]
     // ----  Hessian of π  ----
     // stack X & Y Hessians into [C,N,2,3,3]
-    ctx.H_mean2d_dp = at::stack({ H_mean_x, H_mean_y }, /*dim=*/2);
+    //ctx.H_mean2d_dp = at::stack({ H_mean_x, H_mean_y }, 2);//dim=
     // ----  ∂Σ/∂p  ----
-    ctx.d_Sigma_dp  = at::stack({ dSigma_dx, dSigma_dy, dSigma_dz }, /*dim=*/2);
+    //ctx.d_Sigma_dp  = at::stack({ dSigma_dx, dSigma_dy, dSigma_dz }, 2); // dim=
     // ----  ∂²Σ/∂p² (compact)  ----
     // if you need 6×2×2, reshape/expand H_Sigma appropriately here:
-    ctx.H_Sigma_dp = H_Sigma.view({C, N, /*3→6?*/ 6, 2, 2});
+    //ctx.H_Sigma_dp = H_Sigma.view({C, N,  6, 2, 2});
     // ----  ∂r/∂p  ----
-    ctx.d_r_dp = dr_dp;
+    //ctx.d_r_dp = dr_dp;
     // ----  ∂²r/∂p²  ----
-    ctx.H_r_dp = d2r_dp2.view({C, N, 3, 3, 3});
+    //ctx.H_r_dp = d2r_dp2.view({C, N, 3, 3, 3});
 
     // other LocalNewtonContext fields (d_cSH_dp, etc.) can be set later
 
@@ -240,7 +242,7 @@ ProjectionFunctionForward(
         H_Sigma, dr_dp, d2r_dp2
     );
 }
-
+*/
 
 /*
 std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor>

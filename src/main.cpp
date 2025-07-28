@@ -36,10 +36,11 @@ int main(int argc, char* argv[]) {
         //----------------------------------------------------------------------
         // 5. Create strategy
         //----------------------------------------------------------------------
+        std::unique_ptr<IStrategy> strategy;
         if (params.optimization.trainer_type == "local-newton") {
-            auto strategy = std::make_unique<MCMC>(std::move(splat_data));
+            strategy = std::make_unique<MCMCNewton>(std::move(splat_data));
         } else {
-            auto strategy = std::make_unique<MCMCNewton>(std::move(splat_data));
+            strategy = std::make_unique<MCMC>(std::move(splat_data));
         }
         //----------------------------------------------------------------------
         // 6. Create trainer

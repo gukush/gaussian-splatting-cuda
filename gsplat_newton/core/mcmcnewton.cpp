@@ -1,6 +1,14 @@
+#include <ATen/TensorUtils.h>
+#include <ATen/core/Tensor.h>
+#include <c10/cuda/CUDAGuard.h> // for DEVICE_GUARD
+#include <tuple>
+#include <ATen/Functions.h>
+#include <ATen/NativeFunctions.h>
+#include "core/rasterizer.hpp"
 #include "gsplat_newton/mcmcnewton.hpp"
 #include <random>
 #include <iostream>
+#include "core/splat_data.hpp"
 
 MCMCNewton::MCMCNewton(SplatData&& splat_data)
     : _splat_data(std::move(splat_data)) {
@@ -14,7 +22,7 @@ torch::Tensor MCMCNewton::multinomial_sample(const torch::Tensor& weights, int n
         return torch::multinomial(weights, n, replacement);
     } else {
         // For larger arrays, implement sampling manually
-        auto weights_normalized = weights / (weights.sum() + f1e‑8);
+        auto weights_normalized = weights / (weights.sum() + 1e-8);
         auto weights_cpu = weights_normalized.cpu();
 
         std::vector<int64_t> sampled_indices;
@@ -196,7 +204,7 @@ int MCMCNewton::relocate_gs() {
 
     // Sample from alive Gaussians based on opacity
     auto probs = opacities.index_select(0, alive_indices);
-    if (probs.sum().item<float>()==0) return;
+    if (probs.sum().item<float>()==0) return 0;
     auto sampled_idxs_local = multinomial_sample(probs, n_dead, true);
     auto sampled_idxs = alive_indices.index_select(0, sampled_idxs_local);
 

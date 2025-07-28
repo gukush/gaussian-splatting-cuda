@@ -15,6 +15,7 @@ namespace gsplat_newton {
 // ========================================================================
 // 1. PROJECTION KERNELS
 // ========================================================================
+/*
 std::tuple<
     at::Tensor,  // radii
     at::Tensor,  // means2d
@@ -134,7 +135,7 @@ projection_ewa_3dgs_fused_fwd_LN(
         d2r_dp2_compact
     );
 }
-
+*/
 
 std::tuple<at::Tensor, at::Tensor> compute_covariance_derivatives(
     const at::Tensor means,       // [N, 3] world positions
@@ -232,6 +233,7 @@ std::tuple<at::Tensor, at::Tensor, at::Tensor, at::Tensor> spherical_harmonics_L
 
 std::pair<at::Tensor,at::Tensor> chain_rule_color_position(
     const at::Tensor p_k,             // [...,3]
+    const at::Tensor radii,
     const at::Tensor camera_center,   // [3]
     const at::Tensor color_dir_grad,  // [...,3]
     const at::Tensor color_dir_hess   // [...,6]
@@ -251,6 +253,7 @@ std::pair<at::Tensor,at::Tensor> chain_rule_color_position(
     auto color_pos_hess = at::empty({(int64_t)N, 6}, p_k.options());
     launch_chain_rule_color_position_kernel(
         p_k,
+        radii,
         camera_center,
         color_dir_grad,
         color_dir_hess,
@@ -436,7 +439,7 @@ compute_intermediate_derivatives_bwd(
 // Wrapper function to call all split kernels
 std::tuple<at::Tensor, at::Tensor, at::Tensor,  at::Tensor,
            at::Tensor, at::Tensor, at::Tensor, at::Tensor,
-           at::Tensor>
+           at::Tensor, at::Tensor>
 assemble_derivatives_split(
     // Intermediate derivatives
     const at::Tensor dL_dcSH_totals,
@@ -451,7 +454,6 @@ assemble_derivatives_split(
     const at::Tensor covars,
     const at::Tensor viewmat,
     const at::Tensor dc_sh_dp,
-    const at::Tensor H_mean2d_dp,
     const at::Tensor H_c_sh_p,
     const at::Tensor dSigma_dtheta_inputs,
     const at::Tensor H_Sigma_dtheta_inputs,
@@ -481,6 +483,8 @@ assemble_derivatives_split(
     auto H_L_mixed = torch::empty({num_gaussians, 6}, options);
     // T_k matrix is of size 2x3
     auto T_matrices = torch::empty({num_gaussians, 2, 3}, options);
+    auto U_k_bases = at::empty({num_gaussians, 2, 3}, options);
+    auto dSigma_dp_temp = at::empty({num_gaussians * 12}, options); // 12 floats per Gaussian
     /*
     TORCH_CHECK(dSigma_dp.sizes()[1] == num_gaussians &&
                 dSigma_dp.sizes()[2] == 3 &&
@@ -519,12 +523,14 @@ assemble_derivatives_split(
             dL_dSigma,
             H_L_sigma,
             H_L_mixed,
-            T_matrices
+            U_k_bases,
+            T_matrices,
+            dSigma_dp_temp
         );
 
     return std::make_tuple(dL_dvk, H_L_dvk, dL_dlambda, H_L_dlambda,
                           dL_dtheta, H_L_dtheta,
-                          dL_dcolor, H_L_dcolor, T_matrices);
+                          dL_dcolor, H_L_dcolor, U_k_bases,T_matrices);
 }
 // =====================
 // Losses

@@ -56,7 +56,7 @@ void projection_fwd_with_derivatives(
     uint32_t image_height,
     LocalNewtonContext& context // Output parameter
 );*/
-
+/*
 std::tuple<
     at::Tensor,  // radii
     at::Tensor,  // means2d
@@ -89,7 +89,7 @@ projection_ewa_3dgs_fused_fwd_LN(
     const bool calc_compensations,
     const gsplat::CameraModelType camera_model
 );
-
+*/
 std::tuple<at::Tensor, at::Tensor> compute_covariance_derivatives(
     const at::Tensor means,       // [N, 3] world positions
     const at::Tensor quats,       // [N, 4] quaternions [w, x, y, z]
@@ -138,6 +138,7 @@ std::tuple<at::Tensor, at::Tensor, at::Tensor,  at::Tensor> spherical_harmonics_
 
 std::pair<at::Tensor,at::Tensor> chain_rule_color_position(
     const at::Tensor p_k,             // [...,3]
+    const at::Tensor radii,
     const at::Tensor camera_center,   // [3]
     const at::Tensor color_dir_grad,  // [...,3]
     const at::Tensor color_dir_hess   // [...,6]
@@ -242,7 +243,7 @@ compute_intermediate_derivatives_bwd(
 // ========================================================================
 std::tuple<at::Tensor, at::Tensor, at::Tensor,  at::Tensor,
            at::Tensor, at::Tensor, at::Tensor, at::Tensor,
-           at::Tensor>
+           at::Tensor, at::Tensor>
 assemble_derivatives_split(
     // Intermediate derivatives
     const at::Tensor dL_dcSH_totals,
@@ -252,14 +253,12 @@ assemble_derivatives_split(
     const at::Tensor H_L_mean2d_totals,
     const at::Tensor H_L_conic_totals,
     const at::Tensor H_L_mixedinv_totals,
-    // Projection derivatives
-    const at::Tensor jacobians,
+    const at::Tensor radii,
+    const at::Tensor Ks,
+    const at::Tensor covars,
     const at::Tensor viewmat,
-    const at::Tensor dSigma_dp,
     const at::Tensor dc_sh_dp,
-    const at::Tensor H_mean2d_dp,
     const at::Tensor H_c_sh_p,
-    const at::Tensor H_Sigma_dp,
     const at::Tensor dSigma_dtheta_inputs,
     const at::Tensor H_Sigma_dtheta_inputs,
     const at::Tensor quats,
@@ -330,12 +329,14 @@ void launch_spherical_harmonics_LN_kernel(
 
 void launch_chain_rule_color_position_kernel(
     const at::Tensor p_k,             // [...,3]
+    const at::Tensor radii,
     const at::Tensor camera_center,   // [3]
     const at::Tensor color_dir_grad,  // [...,3]
     const at::Tensor color_dir_hess,  // [...,6]
     at::Tensor       color_pos_grad,  // [...,3]
     at::Tensor       color_pos_hess   // [...,6]
 );
+
 void launch_assemble_derivatives_kernels(
     const int num_gaussians,
     // Input tensors for conversion
@@ -371,7 +372,9 @@ void launch_assemble_derivatives_kernels(
     at::Tensor dL_dSigma,
     at::Tensor H_L_sigma,
     at::Tensor H_L_mixed,
-    at::Tensor T_matrices
+    at::Tensor U_k_bases,
+    at::Tensor T_matrices,
+    at::Tensor dSigma_dp_temp
 );
 
 template <uint32_t CDIM>

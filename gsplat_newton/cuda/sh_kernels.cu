@@ -441,6 +441,7 @@ __global__ void chain_rule_color_position_kernel(
 
 void launch_chain_rule_color_position_kernel(
     const at::Tensor p_k,             // [...,3]
+    const at::Tensor radii,
     const at::Tensor camera_center,   // [3]
     const at::Tensor color_dir_grad,  // [...,3]
     const at::Tensor color_dir_hess,  // [...,6]
@@ -459,6 +460,7 @@ void launch_chain_rule_color_position_kernel(
             blocks, threads, 0, at::cuda::getCurrentCUDAStream()
         >>>(
             N,
+            radii.data_ptr<int32_t>(),
             reinterpret_cast<const glm::vec3*>(p_k.data_ptr<scalar_t>()),
             reinterpret_cast<const glm::vec3*>(camera_center.data_ptr<scalar_t>()),
             reinterpret_cast<const glm::vec3*>(color_dir_grad.data_ptr<scalar_t>()),

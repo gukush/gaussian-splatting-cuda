@@ -620,6 +620,7 @@ __global__ void compute_position_derivatives_kernel(
     vec2 *__restrict__ d_L_vk,
     mat2 *__restrict__ H_L_vk,
     // NEW OUTPUT for scale kernel:
+    mat2x3 *__restrict__ U_k_bases_out,     // [N,2,3] per‐Gaussian basis
     float *__restrict__ dSigma_dp_out        // [N * 12] - packed dSigma/dp matrices
 ) {
     const int g_idx = blockIdx.x * blockDim.x + threadIdx.x;
@@ -776,7 +777,7 @@ __global__ void compute_position_derivatives_kernel(
     // Store main outputs
     d_L_vk[g_idx] = dL_dv;
     H_L_vk[g_idx] = H_v;
-
+    U_k_bases_out[g_idx] = U_k;
     // NEW: Store dSigma_dp for scale kernel
     // Pack dSigma_dp: 12 floats per Gaussian (3 mat2 matrices = 3 * 4 floats)
     const int base_idx = g_idx * 12;
@@ -1124,14 +1125,15 @@ void launch_assemble_derivatives_kernels(
     at::Tensor dL_dSigma,
     at::Tensor H_L_sigma,
     at::Tensor H_L_mixed,
-    at::Tensor T_matrices
+    at::Tensor U_k_bases,
+    at::Tensor T_matrices,
+    at::Tensor dSigma_dp_temp
 ) {
     const int threads = 256;
     const int blocks = (num_gaussians + threads - 1) / threads;
 
     // Create temporary tensor for dSigma_dp
     auto options = at::TensorOptions().dtype(at::kFloat).device(at::kCUDA);
-    at::Tensor dSigma_dp_temp = at::empty({num_gaussians * 12}, options); // 12 floats per Gaussian
 
     // STEP 1: Convert all inverse derivatives once
     convert_inverse_derivatives_kernel<<<blocks, threads, 0, at::cuda::getCurrentCUDAStream()>>>(
@@ -1163,6 +1165,7 @@ void launch_assemble_derivatives_kernels(
         reinterpret_cast<vec2*>(d_L_vk.data_ptr<float>()),
         reinterpret_cast<mat2*>(H_L_vk.data_ptr<float>()),
         // NEW: output for scale kernel
+        reinterpret_cast<mat2x3*>(U_k_bases.data_ptr<float>()),
         dSigma_dp_temp.data_ptr<float>()
     );
     C10_CUDA_KERNEL_LAUNCH_CHECK();

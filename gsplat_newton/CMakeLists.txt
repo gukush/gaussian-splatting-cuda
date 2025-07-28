@@ -16,7 +16,7 @@ set(GSN_SOURCES
     cuda/NewtonCUDA.cu
     cuda/assembly_kernels.cu
     cuda/loss_kernels.cu
-    cuda/projection_kernels.cu
+    #cuda/projection_kernels.cu
     cuda/rasterization_kernels.cu
     cuda/sh_kernels.cu
     # cuda/sh_kernels_old.cu

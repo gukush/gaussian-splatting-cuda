@@ -4,7 +4,8 @@
 #include "gsplat_newton/kernels.hpp"
 #include "kernels/fused_ssim.cuh"
 #include "visualizer/detail.hpp"
-#include "gsplat_newton/Newton.h"
+//#include "gsplat_newton/Newton.h"
+#include "gsplat_newton/mcmcnewton.hpp"
 #include <chrono>
 #include <iostream>
 #include <numeric>
