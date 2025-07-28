@@ -1,6 +1,8 @@
 #pragma once
 #include "core/istrategy.hpp"
 #include "gsplat_newton/local_newton_context.hpp"
+#include "Ops.h"
+#include <c10/cuda/CUDACachingAllocator.h>
 
 class MCMCNewton : public IStrategy {
 public:
@@ -18,7 +20,7 @@ public:
     void set_newton_context(const LocalNewtonContext* ctx) { _newton_context = ctx; }
 
 private:
-    // Core MCMC operations (mostly unchanged)
+    // Core MCMC operations
     torch::Tensor multinomial_sample(const torch::Tensor& weights, int n, bool replacement = true);
     int relocate_gs();
     int add_new_gs();
@@ -31,6 +33,6 @@ private:
     const LocalNewtonContext* _newton_context = nullptr;
 
     // Newton-specific parameters
-    float _base_noise_lr = 5e5;
-    float _lr_decay_rate = 0.01f; // Decay to 1% over iterations
+    float _base_noise_lr = 5e-4;
+    float _lr_decay_rate = 0.01;   // Decay to 1% over iterations, if not use this 0.9995f
 };

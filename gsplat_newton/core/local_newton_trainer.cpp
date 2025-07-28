@@ -285,7 +285,7 @@ namespace gs {
         if (iter % 100 == 0) {
             std::cout << "running solve for updates" <<std::endl;
         }
-        //auto means_before = strategy_->get_model().get_means().clone();
+        auto means_before = strategy_->get_model().get_means().clone();
         gsplat_newton::solve_and_update(
             ctx,
             strategy_->get_model(),

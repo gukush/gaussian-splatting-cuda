@@ -1,6 +1,7 @@
 #include "core/argument_parser.hpp"
 #include "core/dataset.hpp"
 #include "core/mcmc.hpp"
+#include "gsplat_newton/mcmcnewton.hpp"
 #include "core/parameters.hpp"
 #include "core/trainer.hpp"
 #include "core/standard_trainer.hpp"
@@ -35,8 +36,11 @@ int main(int argc, char* argv[]) {
         //----------------------------------------------------------------------
         // 5. Create strategy
         //----------------------------------------------------------------------
-        auto strategy = std::make_unique<MCMC>(std::move(splat_data));
-
+        if (params.optimization.trainer_type == "local-newton") {
+            auto strategy = std::make_unique<MCMC>(std::move(splat_data));
+        } else {
+            auto strategy = std::make_unique<MCMCNewton>(std::move(splat_data));
+        }
         //----------------------------------------------------------------------
         // 6. Create trainer
         //----------------------------------------------------------------------
