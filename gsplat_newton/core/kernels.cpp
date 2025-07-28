@@ -460,6 +460,7 @@ assemble_derivatives_split(
     const at::Tensor quats,
     const at::Tensor conics_2d,
     const at::Tensor p_k,
+    const at::Tensor scales,
     const at::Tensor camera_pos,
     const at::Tensor dL_dck
 //    const at::Tensor dL_dc,
@@ -510,6 +511,7 @@ assemble_derivatives_split(
             H_L_conic_totals,
             H_L_mixedinv_totals,
             p_k,
+            scales,
             dSigma_dtheta_inputs,
             H_Sigma_dtheta_inputs,
             dLcolor_dp,

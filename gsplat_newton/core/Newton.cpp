@@ -7,8 +7,39 @@
 #include <c10/cuda/CUDAGuard.h>
 #include "core/splat_data.hpp"
 #include "Ops.h"
+#include <fstream>
+#include <vector>
 
 namespace gsplat_newton {
+
+    inline void dump_to_csv(const torch::Tensor& tensor,
+                            const std::string& filename,
+                            int precision = 8) {
+        // Move to CPU + double, capture original shape, then flatten
+        auto t_cpu = tensor.to(torch::kCPU).to(torch::kFloat64);
+        std::vector<int64_t> shape(t_cpu.sizes().begin(), t_cpu.sizes().end());
+        auto flat = t_cpu.flatten();
+
+        // Open file
+        std::ofstream out(filename);
+        if (!out.is_open()) {
+            throw std::runtime_error("Could not open file " + filename);
+        }
+
+        // 1) Write shape header: e.g. "3,4,5"
+        for (size_t i = 0; i < shape.size(); ++i) {
+            out << shape[i] << (i + 1 < shape.size() ? ',' : '\n');
+        }
+
+        // 2) Write data values, one per line
+        const double* data = flat.data_ptr<double>();
+        int64_t N = flat.numel();
+        out << std::fixed << std::setprecision(precision);
+        for (int64_t i = 0; i < N; ++i) {
+            out << data[i] << '\n';
+        }
+        out.close();
+    }
 
 void local_newton_backward(
     LocalNewtonContext& context,
@@ -68,7 +99,20 @@ void local_newton_backward(
         means.size(0)
     );
 
-
+    dump_to_csv(context.means2d,"means2d.csv");
+    dump_to_csv(context.conics,"conics.csv");
+    dump_to_csv(context.colors,"colors.csv");
+    dump_to_csv(opacities,"opacities.csv");
+    dump_to_csv(tile_offsets,"tile_offsets.csv");
+    dump_to_csv(flatten_ids,"flatten_ids.csv");
+    dump_to_csv(render_alphas,"render_alphas.csv");
+    dump_to_csv(last_ids,"last_ids.csv");
+    dump_to_csv(context.dL_d_color_img,"dL_d_color_img.csv");
+    dump_to_csv(context.H_L_color_img,"H_L_color_img.csv");
+    std::cout << "means.size(0): "<<means.size(0) <<std::endl;
+    std::cout << "image_width: "<<image_width <<std::endl;
+    std::cout << "image_height: "<<image_height <<std::endl;
+    assert(false && "Waiting for dump!");
     auto dtheta_out = compute_covariance_derivatives(
         means,
         quats,
@@ -114,7 +158,11 @@ void local_newton_backward(
     std::cout << "dL_d_color norm: " << context.dL_d_color.norm().item<float>() << std::endl;
     std::cout << "dL_d_pos_result NaN: " << torch::isnan(context.H_L_color).any().item<bool>() << std::endl;
     std::cout << "H_L_color norm: " << context.H_L_color.norm().item<float>() << std::endl;
-    }
+    std::cout << "dL_d_opacity NaN: " << torch::isnan(context.dL_d_opacity).any().item<bool>() << std::endl;
+    std::cout << "dL_d_opacity norm: " << context.dL_d_opacity.norm().item<float>() << std::endl;
+    std::cout << "H_L_d_opacity NaN: " << torch::isnan(context.H_L_opacity).any().item<bool>() << std::endl;
+    std::cout << "H_L_d_opacity norm: " << context.H_L_opacity.norm().item<float>() << std::endl;
+}
     auto& dLcolor_dr = std::get<2>(sh_outputs);
     auto& H_Lcolor_r = std::get<3>(sh_outputs);
 
@@ -159,6 +207,7 @@ void local_newton_backward(
         quats,
         context.conics,
         means, // p_k
+        scales,
         context.campos,// camera_pos
         context.dL_d_color
     );

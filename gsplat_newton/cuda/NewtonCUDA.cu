@@ -145,23 +145,21 @@ __global__ void solve_updates_and_backproject_kernel_impl(
     // Rotation update ------------------------------------------------------
     // ---------------------------------------------------------------------
     float H_rot = H_L_rot[gid];
-    if (fabsf(H_rot) > 1e-6f) {
+    H_rot += kMatInvEps;
+    float delta_theta = -g_rot / H_rot;  // small angle
+    // axis = view_dir (already world‑space unit)
+    vec3 axis = glm::normalize(glm::make_vec3(view_dirs + gid * 3));
+    float half = 0.5f * delta_theta;
+    float s = sinf(half);
+    vec4 dq(axis.x * s, axis.y * s, axis.z * s, cosf(half));
 
-        float delta_theta = -g_rot / H_rot;  // small angle
+    vec4 q = glm::make_vec4(quats + gid * 4); // (x y z w)
+    vec4 q_new = glm::normalize(quat_mul(dq, q));
+    quats[gid * 4 + 0] = q_new.x;
+    quats[gid * 4 + 1] = q_new.y;
+    quats[gid * 4 + 2] = q_new.z;
+    quats[gid * 4 + 3] = q_new.w;
 
-        // axis = view_dir (already world‑space unit)
-        vec3 axis = glm::normalize(glm::make_vec3(view_dirs + gid * 3));
-        float half = 0.5f * delta_theta;
-        float s = sinf(half);
-        vec4 dq(axis.x * s, axis.y * s, axis.z * s, cosf(half));
-
-        vec4 q = glm::make_vec4(quats + gid * 4); // (x y z w)
-        vec4 q_new = glm::normalize(quat_mul(dq, q));
-        quats[gid * 4 + 0] = q_new.x;
-        quats[gid * 4 + 1] = q_new.y;
-        quats[gid * 4 + 2] = q_new.z;
-        quats[gid * 4 + 3] = q_new.w;
-    }
 
     // ---------------------------------------------------------------------
     // Opacity update  (barrier + smooth‑L1) --------------------------------
@@ -181,7 +179,7 @@ __global__ void solve_updates_and_backproject_kernel_impl(
 
     float g_opac  = dL_d_opacity[gid] + g_bar + g_l1;
     float H_total = H_opac + H_bar + H_l1;
-
+    H_total += kMatInvEps;
     if (fabsf(H_total) > 1e-6f) {
         float delta_sigma = -g_opac / H_total;
         float new_sig = fminf(1.f - 1e-6f, fmaxf(1e-6f, sigma + delta_sigma));
