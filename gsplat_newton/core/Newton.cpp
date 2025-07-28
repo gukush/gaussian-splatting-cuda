@@ -14,7 +14,8 @@ void local_newton_backward(
     LocalNewtonContext& context,
     SplatData& gaussian_model,
     uint32_t image_width,
-    uint32_t image_height
+    uint32_t image_height,
+    bool print
 ) {
 
     auto means = gaussian_model.get_means();
@@ -89,11 +90,11 @@ void local_newton_backward(
 
     context.dL_d_opacity = std::get<8>(intermediate_derivs);
     context.H_L_opacity = std::get<9>(intermediate_derivs);
-
+    if(print) {
     std::cout << "dL_dcSH_totals NaN: " << torch::isnan(dL_dcSH_totals).any().item<bool>() << std::endl;
     std::cout << "dL_dmean2d_totals NaN: " << torch::isnan(dL_dmean2d_totals).any().item<bool>() << std::endl;
     std::cout << "dL_dconic_totals NaN: " << torch::isnan(dL_dconic_totals).any().item<bool>() << std::endl;
-
+    }
     if (torch::isnan(dL_dcSH_totals).any().item<bool>()) {
         std::cout << "ERROR: NaN detected in intermediate derivatives!" << std::endl;
         return; // Early exit to prevent further propagation
@@ -108,6 +109,12 @@ void local_newton_backward(
     );
     context.dL_d_color = std::get<0>(sh_outputs);
     context.H_L_color = std::get<1>(sh_outputs);
+    if (print) {
+    std::cout << "dL_d_pos_result NaN: " << torch::isnan(context.dL_d_color).any().item<bool>() << std::endl;
+    std::cout << "dL_d_color norm: " << context.dL_d_color.norm().item<float>() << std::endl;
+    std::cout << "dL_d_pos_result NaN: " << torch::isnan(context.H_L_color).any().item<bool>() << std::endl;
+    std::cout << "H_L_color norm: " << context.H_L_color.norm().item<float>() << std::endl;
+    }
     auto& dLcolor_dr = std::get<2>(sh_outputs);
     auto& H_Lcolor_r = std::get<3>(sh_outputs);
 
@@ -125,11 +132,12 @@ void local_newton_backward(
     // opacity is calculated in bwd of rasterization
     // color is calculated in spherical harmonics LN (dcRAST_dck)
     // Check intermediate inputs
+    if(print) {
     std::cout << "dL_dmean2d_totals norm: " << dL_dmean2d_totals.norm().item<float>() << std::endl;
     std::cout << "dL_dconic_totals norm: " << dL_dconic_totals.norm().item<float>() << std::endl;
     std::cout << "H_L_mean2d_totals norm: " << H_L_mean2d_totals.norm().item<float>() << std::endl;
     std::cout << "H_L_conic_totals norm: " << H_L_conic_totals.norm().item<float>() << std::endl;
-
+    }
 
     auto newton_systems = assemble_derivatives_split(
         // Inputs from intermediate derivatives
@@ -158,27 +166,34 @@ void local_newton_backward(
     std::cout << "=== After Assembly ===" << std::endl;
     auto& dL_d_pos_result = std::get<0>(newton_systems);
     auto& H_L_pos_result = std::get<1>(newton_systems);
-
+    if(print) {
     std::cout << "dL_d_pos_result NaN: " << torch::isnan(dL_d_pos_result).any().item<bool>() << std::endl;
     std::cout << "H_L_pos_result NaN: " << torch::isnan(H_L_pos_result).any().item<bool>() << std::endl;
     std::cout << "dL_d_pos_result norm: " << dL_d_pos_result.norm().item<float>() << std::endl;
     std::cout << "H_L_pos_result norm: " << H_L_pos_result.norm().item<float>() << std::endl;
-
+    }
 
     // sum the paths related to view dependent color and to G/vis
-    context.dL_d_pos      = dL_d_pos_result + dLcolor_dp;
-    context.H_L_pos       = H_L_pos_result  + H_Lcolor_dp;
+    context.dL_d_pos      = dL_d_pos_result; // the color term is added in assemble function
+    context.H_L_pos       = H_L_pos_result;
     auto dL_dscale_result    = std::get<2>(newton_systems);
     auto H_L_dscale_result     = std::get<3>(newton_systems);
-    std::cout << "dL_d_pos_result NaN: " << torch::isnan(dL_dscale_result).any().item<bool>() << std::endl;
-    std::cout << "H_L_pos_result NaN: " << torch::isnan(H_L_dscale_result).any().item<bool>() << std::endl;
-    std::cout << "dL_d_pos_result norm: " << dL_dscale_result.norm().item<float>() << std::endl;
-    std::cout << "H_L_pos_result norm: " << H_L_dscale_result.norm().item<float>() << std::endl;
-
+    if(print) {
+    std::cout << "dL_d_scale_result NaN: " << torch::isnan(dL_dscale_result).any().item<bool>() << std::endl;
+    std::cout << "H_L_scale_result NaN: " << torch::isnan(H_L_dscale_result).any().item<bool>() << std::endl;
+    std::cout << "dL_d_scale_result norm: " << dL_dscale_result.norm().item<float>() << std::endl;
+    std::cout << "H_L_scale_result norm: " << H_L_dscale_result.norm().item<float>() << std::endl;
+    }
     context.dL_d_scale  = dL_dscale_result;
     context.H_L_scale   = H_L_dscale_result;
     context.dL_d_rot      = std::get<4>(newton_systems);
     context.H_L_rot       = std::get<5>(newton_systems);
+    if(print) {
+    std::cout << "dL_d_rot_result NaN: " << torch::isnan(context.dL_d_rot).any().item<bool>() << std::endl;
+    std::cout << "H_L_rot_result NaN: " << torch::isnan(context.H_L_rot).any().item<bool>() << std::endl;
+    std::cout << "dL_d_rot_result norm: " <<context.dL_d_rot.norm().item<float>() << std::endl;
+    std::cout << "H_L_rot_result norm: " << context.H_L_rot.norm().item<float>() << std::endl;
+    }
     //context.dL_d_color    = std::get<6>(newton_systems);
     //context.H_L_color     = std::get<7>(newton_systems);
     context.U_k_bases     = std::get<8>(newton_systems);

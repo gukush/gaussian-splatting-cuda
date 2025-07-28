@@ -217,11 +217,13 @@ namespace gs {
         if (iter % 100 == 0) {
             std::cout << "performing local newton backward passs";
         }
+        bool print_backward = true;//(iter % 10 == 0);
         gsplat_newton::local_newton_backward(
             ctx,
             strategy_->get_model(),
             static_cast<int>(cam->image_width()),
-            static_cast<int>(cam->image_height())
+            static_cast<int>(cam->image_height()),
+            print_backward
         );
         if (iter % 100 == 0) {
             std::cout << "getting neighbors from knn";
@@ -298,6 +300,9 @@ namespace gs {
         std::cout << "Newton update norm: " << update_norm << std::endl;
         if (auto* mcmc_newton = dynamic_cast<MCMCNewton*>(strategy_.get())) {
             mcmc_newton->set_newton_context(&ctx);
+        }
+        if(iter >= 2) {
+        assert(false && "Stopping here for now \n");
         }
         {
             torch::NoGradGuard no_grad;

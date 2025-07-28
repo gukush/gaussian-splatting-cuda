@@ -257,8 +257,8 @@ assemble_derivatives_split(
     const at::Tensor Ks,
     const at::Tensor covars,
     const at::Tensor viewmat,
-    const at::Tensor dc_sh_dp,
-    const at::Tensor H_c_sh_p,
+    const at::Tensor dL_dp,
+    const at::Tensor H_L_dp,
     const at::Tensor dSigma_dtheta_inputs,
     const at::Tensor H_Sigma_dtheta_inputs,
     const at::Tensor quats,
@@ -359,6 +359,8 @@ void launch_assemble_derivatives_kernels(
     const at::Tensor p_k,
     const at::Tensor dSigma_dtheta,
     const at::Tensor H_Sigma_dtheta,
+    const at::Tensor dLcolor_dp,
+    const at::Tensor H_Lcolor_dp,
     // OUTPUTS:
     at::Tensor d_L_vk, // [N, 2]
     at::Tensor H_L_vk, // [N, 3]
@@ -468,7 +470,8 @@ void local_newton_backward(
     LocalNewtonContext& context,
     SplatData& gaussian_model,
     uint32_t image_width,
-    uint32_t image_height
+    uint32_t image_height,
+    bool print
 );
 
 void solve_and_update(

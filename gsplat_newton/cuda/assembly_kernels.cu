@@ -612,10 +612,12 @@ __global__ void compute_position_derivatives_kernel(
     const float *__restrict__ H_L_sigma_totals,       // Changed: now pre-converted
     const float *__restrict__ H_L_mixed_totals,       // Changed: now pre-converted
     const vec3 *__restrict__ p_k,
-    const mat3 *__restrict__ Ks,
+    const mat3 *__restrict__ K,                         // [1, 3, 3]
     const mat3 *__restrict__ covars,
     const int32_t* __restrict__ radii,
     const vec3 *__restrict__ campos,
+    const vec3 *__restrict__ dLcolor_dp,               // [N,3] gradients from the color path
+    const float *__restrict__ H_Lcolor_dp,              // [N, 6]w.r.t position
     // OUTPUTS:
     vec2 *__restrict__ d_L_vk,
     mat2 *__restrict__ H_L_vk,
@@ -623,7 +625,16 @@ __global__ void compute_position_derivatives_kernel(
     mat2x3 *__restrict__ U_k_bases_out,     // [N,2,3] per‐Gaussian basis
     float *__restrict__ dSigma_dp_out        // [N * 12] - packed dSigma/dp matrices
 ) {
+    __shared__ mat3 K_shared;
     const int g_idx = blockIdx.x * blockDim.x + threadIdx.x;
+
+    const int tid = threadIdx.x;
+
+    // Load K matrix into shared memory (only first 9 threads do this)
+    if (tid == 0) {
+        K_shared = K[0];
+    }
+    __syncthreads();
     if (g_idx >= num_gaussians) return;
 
     if(radii[g_idx*2] <= 0 || radii[g_idx*2+1] <= 0) return;
@@ -632,11 +643,11 @@ __global__ void compute_position_derivatives_kernel(
 
     // Load pre-converted derivatives (no conversion needed!)
     const vec3 dL_dSigma = dL_dSigma_totals[g_idx];
-    const float* H_L_sigma = H_L_sigma_totals + g_idx * 6;
-    const float* H_L_mixed = H_L_mixed_totals + g_idx * 6;
+    //const float* H_L_sigma = H_L_sigma_totals + g_idx * 6;
+    //const float* H_L_mixed = H_L_mixed_totals + g_idx * 6;
 
     vec3 splat_pos = p_k[g_idx];
-    mat3 K = Ks[g_idx];
+
     mat3 covar = glm::transpose(covars[g_idx]); // because QuatScaleToCovar transposes in row major
 
     // Construct orthonormal basis
@@ -660,8 +671,8 @@ __global__ void compute_position_derivatives_kernel(
     mat2 H_pi_pi = mat2(H_L_mean2d[g_idx].x, H_L_mean2d[g_idx].y,
                         H_L_mean2d[g_idx].y, H_L_mean2d[g_idx].z);
 
-    const float* Hmix = H_L_mixed + 6*g_idx;
-    const float* Hc = H_L_sigma + 6*g_idx;
+    const float* Hmix = H_L_mixed_totals + 6*g_idx;
+    const float* Hc = H_L_sigma_totals + 6*g_idx;
 
     // Unpack H_{πΣ} (2×3) into mat3x2 (3 cols, 2 rows)
     mat3x2 H_pi_Sigma;
@@ -686,7 +697,7 @@ __global__ void compute_position_derivatives_kernel(
 
     // Pinhole projection derivatives and hessians
     const float rz = 1.f / splat_pos.z, rz2 = rz*rz, rz3 = rz2 * rz, rz4 = rz3 * rz;
-    const float fx = K[0][0], fy = K[1][1];
+    const float fx = K_shared[0][0], fy = K_shared[1][1];
     mat3x2 J(
         fx * rz, 0.f,
         0.f,     fy * rz,
@@ -766,7 +777,26 @@ __global__ void compute_position_derivatives_kernel(
         H_Sigma_pxx, H_Sigma_pxy, H_Sigma_pyy,
         H_Sigma_pxz, H_Sigma_pyz, H_Sigma_pzz
     );
+     // Load and add color gradients and hessians
+    // Load 3-element gradient from color path
+    const vec3* color_grad_ptr = dLcolor_dp + g_idx * 3;
+    vec3 color_grad = *color_grad_ptr;
 
+    // Load 6-element symmetric hessian from color path
+    const float* color_hess_ptr = H_Lcolor_dp + g_idx * 6;
+    mat3 color_hessian;
+
+    // Reconstruct symmetric 3x3 hessian from 6 unique elements
+    // Based on your storage format: [xx, yy, zz, xy, xz, yz]
+    color_hessian[0][0] = color_hess_ptr[0];  // xx
+    color_hessian[1][1] = color_hess_ptr[1];  // yy
+    color_hessian[2][2] = color_hess_ptr[2];  // zz
+    color_hessian[0][1] = color_hessian[1][0] = color_hess_ptr[3];  // xy = yx
+    color_hessian[0][2] = color_hessian[2][0] = color_hess_ptr[4];  // xz = zx
+    color_hessian[1][2] = color_hessian[2][1] = color_hess_ptr[5];  // yz = zy
+
+    final_grad += color_grad;
+    final_hessian += color_hessian;
     // Transform to reduced coordinates
     vec2 dL_dv = {dot(U_k[0], final_grad), dot(U_k[1], final_grad)};
     mat2 H_v = mat2(
@@ -1112,6 +1142,8 @@ void launch_assemble_derivatives_kernels(
     const at::Tensor p_k,
     const at::Tensor dSigma_dtheta,
     const at::Tensor H_Sigma_dtheta,
+    const at::Tensor dLcolor_dp,
+    const at::Tensor H_Lcolor_dp,
     // OUTPUTS:
     at::Tensor d_L_vk, // [N, 2]
     at::Tensor H_L_vk, // [N, 3]
@@ -1162,6 +1194,8 @@ void launch_assemble_derivatives_kernels(
         reinterpret_cast<const mat3*>(covars.data_ptr<float>()),
         radii.data_ptr<int32_t>(),
         reinterpret_cast<const vec3*>(campos.data_ptr<float>()),
+        reinterpret_cast<const vec3*>(dLcolor_dp.data_ptr<float>()),
+        H_Lcolor_dp.data_ptr<float>(),
         reinterpret_cast<vec2*>(d_L_vk.data_ptr<float>()),
         reinterpret_cast<mat2*>(H_L_vk.data_ptr<float>()),
         // NEW: output for scale kernel
