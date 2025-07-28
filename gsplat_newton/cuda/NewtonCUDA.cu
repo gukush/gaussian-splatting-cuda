@@ -91,12 +91,16 @@ __global__ void solve_updates_and_backproject_kernel_impl(
 ) {
     const uint32_t gid = blockIdx.x * blockDim.x + threadIdx.x;
     if (gid >= N) return;
+    vec2  g_pos = glm::make_vec2(dL_d_pos + gid * 2);
+    vec2  g_scale = glm::make_vec2(dL_d_scale + gid * 2);
+    float g_rot      = dL_d_rot[gid];
 
+    const float* gc_ptr = dL_d_color + gid * 3;
     // ---------------------------------------------------------------------
     // Position update (Δp_k = U^T Δv_k) -----------------------------------
     // ---------------------------------------------------------------------
     mat2  H_pos = glm::make_mat2(H_L_pos  + gid * 4);
-    vec2  g_pos = glm::make_vec2(dL_d_pos + gid * 2);
+
     H_pos[0][0] += kMatInvEps;
     H_pos[1][1] += kMatInvEps;
     vec2  delta_vk = -glm::inverse(H_pos) * g_pos;
@@ -113,7 +117,7 @@ __global__ void solve_updates_and_backproject_kernel_impl(
     // Scale update  (Δs_k = (T^T T)^{-1} T^T Δλ) ---------------------------
     // ---------------------------------------------------------------------
     mat2  H_scale = glm::make_mat2(H_L_scale  + gid * 4);
-    vec2  g_scale = glm::make_vec2(dL_d_scale + gid * 2);
+
     H_scale[0][0] += kMatInvEps;
     H_scale[1][1] += kMatInvEps;
     vec2  delta_lambda = -glm::inverse(H_scale) * g_scale;
@@ -140,7 +144,7 @@ __global__ void solve_updates_and_backproject_kernel_impl(
     // ---------------------------------------------------------------------
     float H_rot = H_L_rot[gid];
     if (fabsf(H_rot) > 1e-6f) {
-        float g_rot      = dL_d_rot[gid];
+
         float delta_theta = -g_rot / H_rot;  // small angle
 
         // axis = view_dir (already world‑space unit)
@@ -186,7 +190,7 @@ __global__ void solve_updates_and_backproject_kernel_impl(
     // Colour (SH DC coefficient only, diagonal Hessian) --------------------
     // ---------------------------------------------------------------------
     const float* Hc_ptr = H_L_color + gid * 9;  // 3×3 but we use diag only
-    const float* gc_ptr = dL_d_color + gid * 3;
+
     for (int ch = 0; ch < 3; ++ch) {
         float g = gc_ptr[ch];
         float h = Hc_ptr[ch * 4] + kMatInvEps; // diag indices 0,4,8

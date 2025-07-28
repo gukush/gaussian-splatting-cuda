@@ -20,14 +20,26 @@ namespace gsplat_newton {
  */
 __device__ __forceinline__ mat2 compute_inverse_covariance_2d(const vec3& conic_2d) {
     const float det = conic_2d.x * conic_2d.y - conic_2d.z * conic_2d.z;
-    const float inv_det = 1.0f / fmaxf(det, 1e-10f); // Numerical stability
 
+    // Check for near-singular matrix
+    if (fabsf(det) < 1e-6f) {
+        // Fallback to regularized inverse
+        const float reg = 1e-4f;
+        const float reg_det = (conic_2d.x + reg) * (conic_2d.y + reg) - conic_2d.z * conic_2d.z;
+        const float inv_det = 1.0f / reg_det;
+
+        mat2 Sigma_inv;
+        Sigma_inv[0][0] = (conic_2d.y + reg) * inv_det;
+        Sigma_inv[1][1] = (conic_2d.x + reg) * inv_det;
+        Sigma_inv[1][0] = Sigma_inv[0][1] = -conic_2d.z * inv_det;
+        return Sigma_inv;
+    }
+
+    const float inv_det = 1.0f / det;
     mat2 Sigma_inv;
-    Sigma_inv[0][0] = conic_2d.y * inv_det;     // Σ^{-1}_{00} = Σ_{11} / det
-    Sigma_inv[1][1] = conic_2d.x * inv_det;     // Σ^{-1}_{11} = Σ_{00} / det
-    Sigma_inv[1][0] = -conic_2d.z * inv_det;    // Σ^{-1}_{01} = -Σ_{01} / det
-    Sigma_inv[0][1] = Sigma_inv[1][0];          // Symmetry
-
+    Sigma_inv[0][0] = conic_2d.y * inv_det;
+    Sigma_inv[1][1] = conic_2d.x * inv_det;
+    Sigma_inv[1][0] = Sigma_inv[0][1] = -conic_2d.z * inv_det;
     return Sigma_inv;
 }
 
@@ -500,63 +512,88 @@ __device__ __forceinline__ vec3 compute_dL_dpk_local(
 // ——— replaces compute_d2c_dpk2_local ———
 // chains the (π,Σ)-level Hessian blocks plus intrinsic curvature into
 // H_L_p   = ∂²L/∂p_k²   (3×3)
-__device__ __forceinline__ mat3 compute_H_L_p_local(
-    const vec2&   dL_dpi,            // ∂L/∂π (2)
-    const vec3&   dL_dSigma,         // ∂L/∂Σ (3)
-    const mat2&   H_pi_pi,            // H_{ππ} (2×2)
-    const mat2x3& H_pi_Sigma,         // H_{πΣ} (2×3)
-    const mat3&   H_Sigma_Sigma,      // H_{ΣΣ} (3×3)
-    const mat3x2& J_pi,               // ∂π/∂p  (2×3)
-    const mat2&   dSigma_dpx,         // ∂Σ/∂p_x  (2×2)
-    const mat2&   dSigma_dpy,         // ∂Σ/∂p_y
-    const mat2&   dSigma_dpz,         // ∂Σ/∂p_z
-    const mat3&   H_pi2_px,           // ∂²π/∂p_x²  (2→3×3 packed in mat3)
-    const mat3&   H_pi2_py,           // ∂²π/∂p_x∂p_y
-    const mat3&   H_Sigma2_pxx,       // ∂²Σ/∂p_x²
-    const mat3&   H_Sigma2_pxy,       // ∂²Σ/∂p_x∂p_y
-    const mat3&   H_Sigma2_pyy        // ∂²Σ/∂p_y²
+__device__ __forceinline__
+mat3 compute_H_L_p_local(
+    // — first‐order weights —
+    const vec2&   dL_dpi,            // ∂L/∂π_u, ∂L/∂π_v
+    const float   dL_dSigma_xx,      // ∂L/∂Σ₁₁
+    const float   dL_dSigma_xy,      // ∂L/∂Σ₁₂
+    const float   dL_dSigma_yy,      // ∂L/∂Σ₂₂
+    const float   dL_dSigma_xz,      // ∂L/∂Σ₁₃
+    const float   dL_dSigma_yz,      // ∂L/∂Σ₂₃
+    const float   dL_dSigma_zz,      // ∂L/∂Σ₃₃
+
+    // — second‐order π‐blocks —
+    const mat2&   H_pi_pi,           // H_{ππ} (2×2)
+    const mat2x3& H_pi_Sigma,        // H_{πΣ} (2→Σ)
+    const mat3&   H_Sigma_Sigma,     // H_{ΣΣ} (Σ→Σ)
+    const mat3x2& J_pi,              // ∂π/∂p  (2×3)
+    const mat3&   H_pi2_px,          // ∂²π/∂p_x²  (3×3)
+    const mat3&   H_pi2_py,          // ∂²π/∂p_x∂p_y (3×3)
+
+    // — first‐order Σ‐blocks (build J_Sigma yourself before) —
+    const mat2&   dSigma_dpx,        // ∂Σ/∂p_x  (2→plane)
+    const mat2&   dSigma_dpy,        // ∂Σ/∂p_y
+    const mat2&   dSigma_dpz,        // ∂Σ/∂p_z
+
+    // — second‐order Σ‐blocks
+    const mat3&   H_Sigma2_pxx,      // ∂²Σ/∂p_x²  (3×3)
+    const mat3&   H_Sigma2_pxy,      // ∂²Σ/∂p_x∂p_y
+    const mat3&   H_Sigma2_pyy,      // ∂²Σ/∂p_y²
+    const mat3&   H_Sigma2_pxz,      // ∂²Σ/∂p_x∂p_z
+    const mat3&   H_Sigma2_pyz,      // ∂²Σ/∂p_y∂p_z
+    const mat3&   H_Sigma2_pzz       // ∂²Σ/∂p_z²
 ) {
-    // first build a tiny 3×3 J_Σ←p
-    //   row 0 = ∂Σ₀₀/∂p, row 1 = ∂Σ₁₁/∂p, row 2 = ∂Σ₀₁/∂p
+    // — build the little J_Sigma (3 Σ‐entries ← 3 p‐dims) —
+    //    row 0 = ∂Σ₁₁/∂p,  row 1 = ∂Σ₂₂/∂p,  row 2 = ∂Σ₁₂/∂p
     mat3 J_Sigma;
-    J_Sigma[0] = vec3(dSigma_dpx[0][0], dSigma_dpy[0][0], dSigma_dpz[0][0]);
-    J_Sigma[1] = vec3(dSigma_dpy[1][1], dSigma_dpy[1][1], dSigma_dpz[1][1]);
-      // careful: ensure you pick [1][1] for Σ₁₁
-    J_Sigma[2] = vec3(dSigma_dpx[1][0], dSigma_dpy[1][0], dSigma_dpz[1][0]);
+    J_Sigma[0] = vec3(dSigma_dpx[0][0],
+                      dSigma_dpy[0][0],
+                      dSigma_dpz[0][0]);
+    J_Sigma[1] = vec3(dSigma_dpx[1][1],
+                      dSigma_dpy[1][1],
+                      dSigma_dpz[1][1]);
+    J_Sigma[2] = vec3(dSigma_dpx[0][1],
+                      dSigma_dpy[0][1],
+                      dSigma_dpz[0][1]);
 
     mat3 H(0.0f);
 
-    // — (∂π/∂p)ᵀ H_{ππ} (∂π/∂p) —
-    for(int a=0;a<2;++a) for(int b=0;b<2;++b){
-      float h = H_pi_pi[a][b];
+    // 1) (∂π/∂p)ᵀ H_{ππ} (∂π/∂p)
+    for(int a=0;a<2;++a) for(int b=0;b<2;++b) {
+      float hij = H_pi_pi[a][b];
       for(int i=0;i<3;++i) for(int j=0;j<3;++j)
-        H[i][j] += J_pi[i][a] * h * J_pi[j][b];
+        H[i][j] += J_pi[i][a] * hij * J_pi[j][b];
     }
 
-    // — 2*(∂π/∂p)ᵀ H_{πΣ} (∂Σ/∂p) —
-    for(int a=0;a<2;++a) for(int b=0;b<3;++b){
-      float h = H_pi_Sigma[a][b];
+    // 2) 2*(∂π/∂p)ᵀ H_{πΣ} (∂Σ/∂p)
+    for(int a=0;a<2;++a) for(int b=0;b<3;++b) {
+      float hij = H_pi_Sigma[a][b];
       for(int i=0;i<3;++i) for(int j=0;j<3;++j)
-        H[i][j] += 2.0f * J_pi[j][a] * h * J_Sigma[b][i];
+        H[i][j] += 2.f * J_pi[j][a] * hij * J_Sigma[b][i];
     }
 
-    // — (∂Σ/∂p)ᵀ H_{ΣΣ} (∂Σ/∂p) —
-    for(int a=0;a<3;++a) for(int b=0;b<3;++b){
-      float h = H_Sigma_Sigma[a][b];
+    // 3) (∂Σ/∂p)ᵀ H_{ΣΣ} (∂Σ/∂p)
+    for(int a=0;a<3;++a) for(int b=0;b<3;++b) {
+      float hij = H_Sigma_Sigma[a][b];
       for(int i=0;i<3;++i) for(int j=0;j<3;++j)
-        H[i][j] += J_Sigma[a][j] * h * J_Sigma[b][i];
+        H[i][j] += J_Sigma[a][j] * hij * J_Sigma[b][i];
     }
 
-    // — intrinsic from ∂²π/∂p² weighted by ∂L/∂π —
+    // 4) intrinsic from ∂²π/∂p² weighted by ∂L/∂π
     for(int i=0;i<3;++i) for(int j=0;j<3;++j){
       H[i][j] += dL_dpi.x * H_pi2_px[i][j]
                + dL_dpi.y * H_pi2_py[i][j];
     }
-    // — intrinsic from ∂²Σ/∂p² weighted by ∂L/∂Σ —
+
+    // 5) intrinsic from ∂²Σ/∂p² weighted by ∂L/∂Σ
     for(int i=0;i<3;++i) for(int j=0;j<3;++j){
-      H[i][j] += dL_dSigma.x * H_Sigma2_pxx[i][j]
-               + dL_dSigma.y * H_Sigma2_pxy[i][j]
-               + dL_dSigma.z * H_Sigma2_pyy[i][j];
+      H[i][j] += dL_dSigma_xx * H_Sigma2_pxx[i][j]
+               + dL_dSigma_xy * H_Sigma2_pxy[i][j]
+               + dL_dSigma_yy * H_Sigma2_pyy[i][j]
+               + dL_dSigma_xz * H_Sigma2_pxz[i][j]
+               + dL_dSigma_yz * H_Sigma2_pyz[i][j]
+               + dL_dSigma_zz * H_Sigma2_pzz[i][j];
     }
 
     return H;
@@ -574,11 +611,10 @@ const vec3 *__restrict__ dL_dG_totals,
     const vec3 *__restrict__ H_L_mean2d,
     const float *__restrict__ H_L_sigma_totals,       // Changed: now pre-converted
     const float *__restrict__ H_L_mixed_totals,       // Changed: now pre-converted
-    const mat3x2 *__restrict__ jacobians,
-    const float *__restrict__ dSigma_dp,
-    const float *__restrict__ H_mean2d_dp,
-    const float *__restrict__ H_Sigma_dp,
     const vec3 *__restrict__ p_k,
+    const mat3 *__restrict__ Ks,
+    const mat3 *__restrict__ covars,
+    const int32_t* __restrict__ radii,
 //    const vec3 *__restrict__ dL_dc,
 //    const vec3 *__restrict__ d2L_dc2,
     const vec3 *__restrict__ campos,
@@ -588,6 +624,8 @@ const vec3 *__restrict__ dL_dG_totals,
 ) {
     const int g_idx = blockIdx.x * blockDim.x + threadIdx.x;
     if (g_idx >= num_gaussians) return;
+
+    if(radii[g_idx*2] <= 0 || radii[g_idx*2+1] <= 0) return;
 
     const vec3 camera_pos = campos[0];
 
@@ -601,19 +639,19 @@ const vec3 *__restrict__ dL_dG_totals,
     int base_S = g_idx * DS_STRIDE;
     int base_Hm = g_idx * 18;
 
-    mat2 dSigma_dpx = glm::make_mat2(&dSigma_dp[base_S + 0]);
-    mat2 dSigma_dpy = glm::make_mat2(&dSigma_dp[base_S + 4]);
-    mat2 dSigma_dpz = glm::make_mat2(&dSigma_dp[base_S + 8]);
-
     mat2 H_Sigma_pxx = glm::make_mat2(&H_Sigma_dp[base_S + 0]);
     mat2 H_Sigma_pxy = glm::make_mat2(&H_Sigma_dp[base_S + 4]);
     mat2 H_Sigma_pyy = glm::make_mat2(&H_Sigma_dp[base_S + 8]);
 
-    mat3 H_pi_px = glm::make_mat3(&H_mean2d_dp[base_Hm + 0]);
-    mat3 H_pi_py = glm::make_mat3(&H_mean2d_dp[base_Hm + 9]);
+    //mat3 H_pi_px = glm::make_mat3(&H_mean2d_dp[base_Hm + 0]);
+    //mat3 H_pi_py = glm::make_mat3(&H_mean2d_dp[base_Hm + 9]);
+
+    vec3 splat_pos = p_k[g_idx];
+    mat3 K = Ks[g_idx];
+    mat3 covar = covars[g_idx];
 
     // Construct orthonormal basis
-    vec3 r_k = normalize(camera_pos - p_k[g_idx]);
+    vec3 r_k = normalize(camera_pos - splat_pos);
     vec3 world_up(0, 1, 0);
     vec3 r_cross_up = cross(r_k, world_up);
 
@@ -655,10 +693,105 @@ const vec3 *__restrict__ dL_dG_totals,
     H_Sigma_Sigma[0][0] = Hc[0]; // (0,0)
     H_Sigma_Sigma[0][1] = Hc[3]; // (1,0)
     H_Sigma_Sigma[0][2] = Hc[2]; // (2,0)
+
+    // Pinhole projection derivatives and hessians
+    const float rz = 1.f / splat_pos.z, rz2 = rz*rz, rz3 = rz2 * rz;
+    const float fx = K[0][0], fy = K[1][1];
+    mat3x2 J(
+        fx * rz, 0.f,
+        0.f,     fy * rz,
+        -fx * splat_pos.x * rz2, -fy * splat_pos.y * rz2
+    );
+
+    mat3 H_pi_px(0.f);
+    H_pi_px[0][2] = H_pi_px[2][0] = -fx * rz2;
+    H_pi_px[2][2] = 2.f * fx * splat_pos.x * rz3;
+
+    mat3 H_pi_py(0.f);
+    H_pi_py[1][2] = H_pi_py[2][1] = -fy * rz2;
+    H_pi_py[2][2] = 2.f * fy * splat_pos.y * rz3;
+
+    const float s_xx = covar[0][0], s_xy = covar[0][1], s_xz = covar[0][2];
+    const float s_yy = covar[1][1], s_yz = covar[1][2], s_zz = covar[2][2];
+
+    mat2 dSigma_dpx = (fx * rz2) * mat2(-2.f * s_xz, -s_yz, -s_yz, 0.f);
+    mat2 dSigma_dpy = (fy * rz2) * mat2(0.f, -s_xz, -s_xz, -2.f * s_yz);
+
+    float A = fx * (splat_pos.x*s_xz + splat_pos.y*s_yz + splat_pos.z*s_zz);
+    float B = fy * (splaT_pos.x*s_xy + splat_pos.y*s_yy + splat_pos.z*s_yz);
+    mat2 dS_dz;
+    dS_dz[0][0] = 2.f * (fx * s_xz + A * fx * splat_pos.x * rz2);
+    dS_dz[1][1] = 2.f * (fy * s_yz + B * fy * splaT_pos.y * rz2);
+    dS_dz[0][1] = dS_dz[1][0] = (fx*s_yz + fy*s_xz + A*fx*splat_pos.y*rz2 + B*fy*splaT_pos.x*rz2);
+    mat2 dSigma_dpz = -rz2 * dS_dz;
+
+   glm::mat3x2 dJdx(
+    // col0       col1       col2
+      0.f,        0.f,   -fx * rz2,   // row0
+      0.f,        0.f,         0.f    // row1
+    );
+    glm::mat3x2 dJdy(
+        0.f,        0.f,        0.f,    // row0
+        0.f,        0.f,  -fy * rz2     // row1
+    );
+    glm::mat3x2 dJdz(
+    -fx * rz2,     0.f,   2.f * fx * x * rz3,   // row0
+        0.f,  -fy * rz2,   2.f * fy * y * rz3    // row1
+    );
+
+    // 2) Build the three mixed 2nd‑derivatives ∂²_{kℓ}J:
+    glm::mat3x2 d2Jdxz(
+        0.f,        0.f,    2.f * fx * rz3,   // row0
+        0.f,        0.f,          0.f        // row1
+    );
+    glm::mat3x2 d2Jdyz(
+        0.f,        0.f,          0.f,        // row0
+        0.f,        0.f,   2.f * fy * rz3     // row1
+    );
+    glm::mat3x2 d2Jdzz(
+    2.f * fx * rz3,    0.f,   -6.f * fx * x * rz4,   // row0
+            0.f,   2.f * fy * rz3,  -6.f * fy * y * rz4  // row1
+    );
+
+    // 3) Now compute each of the six 2×2 Hessian‑blocks
+    //    using H_{kl} = (∂²_{kl}J) Σ Jᵀ  + (∂ₖJ) Σ (∂_ℓJ)ᵀ
+    //                  + (∂_ℓJ) Σ (∂ₖJ)ᵀ +  J Σ (∂²_{kl}J)ᵀ
+
+    // xx:
+    glm::mat2 H_Sigma_pxx = 2.f * (dJdx * covar * glm::transpose(dJdx));
+
+    // yy:
+    glm::mat2 H_Sigma_pyy = 2.f * (dJdy * covar * glm::transpose(dJdy));
+
+    // xy (same as yx):
+    glm::mat2 H_Sigma_pxy =
+        dJdx * covar * glm::transpose(dJdy)
+    + dJdy * covar * glm::transpose(dJdx);
+
+    // xz (same as zx):
+    glm::mat2 H_Sigma_pxz =
+        d2Jdxz * covar * glm::transpose(J)
+    + dJdx   * covar * glm::transpose(dJdz)
+    + dJdz   * covar * glm::transpose(dJdx)
+    + J      * covar * glm::transpose(d2Jdxz);
+
+    // yz (same as zy):
+    glm::mat2 H_Sigma_pyz =
+        d2Jdyz * covar * glm::transpose(J)
+    + dJdy   * covar * glm::transpose(dJdz)
+    + dJdz   * covar * glm::transpose(dJdy)
+    + J      * covar * glm::transpose(d2Jdyz);
+
+    // zz:
+    glm::mat2 H_Sigma_pzz =
+        d2Jdzz * covar * glm::transpose(J)
+    + 2.f * (dJdz * covar * glm::transpose(dJdz))
+    + J      * covar * glm::transpose(d2Jdzz);
+
     // Position gradient computation
     vec3 final_grad    = compute_dL_dpk_local(
         dL_dpi, dL_dSigma,
-        jacobians[g_idx],
+        J,
         dSigma_dpx, dSigma_dpy, dSigma_dpz
     );
 
@@ -666,10 +799,11 @@ const vec3 *__restrict__ dL_dG_totals,
     mat3 final_hessian = compute_H_L_p_local(
         dL_dpi, dL_dSigma,
         H_pi_pi, H_pi_Sigma, H_Sigma_Sigma,
-        jacobians[g_idx],
+        J,
         dSigma_dpx, dSigma_dpy, dSigma_dpz,
         H_pi_px, H_pi_py,
-        H_Sigma_pxx, H_Sigma_pxy, H_Sigma_pyy
+        H_Sigma_pxx, H_Sigma_pxy, H_Sigma_pyy,
+        H_Sigma_pxz, H_Sigma_pyz, H_Sigma_pzz
     );
 
     // Transform to reduced coordinates
@@ -750,6 +884,7 @@ mat3 unpack_H_SigmaSigma(const float* Hc) {
 
 __global__ void compute_scale_derivatives_kernel(
     const int   num_gaussians,
+    const int32_t* __restrict__ radii,
     // — loss‑space derivatives ready to go —
     const vec3* __restrict__ dL_dSigma_totals,   // [N] vec3{∂L/∂Σ₁₁,∂L/∂Σ₁₂,∂L/∂Σ₂₂}
     const float* __restrict__ H_L_conic_totals,   // [N×6] packed HΣΣ as above
@@ -766,7 +901,7 @@ __global__ void compute_scale_derivatives_kernel(
 ) {
     int g_idx = blockIdx.x * blockDim.x + threadIdx.x;
     if (g_idx >= num_gaussians) return;
-
+    if (radii[g_idx*2] <= 0 || radii[g_idx*2 + 1] <= 0) return;
     // 1) load the loss-space gradient & Hessian‐block
     vec3 L_Sigma = dL_dSigma_totals[g_idx];
     const float* Hc = H_L_conic_totals + g_idx*6;
@@ -867,6 +1002,7 @@ __global__ void compute_scale_derivatives_kernel(
  */
 __global__ void compute_rotation_derivatives_kernel(
     const int num_gaussians,
+    const int32_t* __restrict__ radii,
     const float *__restrict__ dL_dG_totals,
     const vec3 *__restrict__ dL_dSigma_totals,        // Changed: now pre-converted
     const float *__restrict__ H_L_sigma_totals,       // Changed: now pre-converted
@@ -878,7 +1014,7 @@ __global__ void compute_rotation_derivatives_kernel(
 ) {
     const int g_idx = blockIdx.x * blockDim.x + threadIdx.x;
     if (g_idx >= num_gaussians) return;
-
+    if (radii[g_idx*2] <= 0 || radii[g_idx*2 + 1] <= 0) return;
     // Load pre-converted derivatives (no conversion needed!)
     // 1) load the loss-space gradient & Hessian‐block
     vec3 L_Sigma = dL_dSigma_totals[g_idx];
@@ -928,6 +1064,7 @@ __global__ void compute_rotation_derivatives_kernel(
 __global__ void compute_color_derivatives_kernel(
     const int num_gaussians,
     const int num_sh_coeffs,   // e.g., 16 for SH degree 3
+    const int32_t* __restrict__ radii,
     const float *__restrict__ dcRAST_dck, // Input: ∂c_RASTERIZED / ∂c_k (size: num_gaussians * num_sh_coeffs)
     const vec3 *__restrict__ dL_dc,         // Input: ∂L / ∂c_RASTERIZED
     const vec3 *__restrict__ H_L_dc,        // Input: Diagonal of ∂²L / ∂c_RASTERIZED²
@@ -937,7 +1074,7 @@ __global__ void compute_color_derivatives_kernel(
 ) {
     const int g_idx = blockIdx.x * blockDim.x + threadIdx.x;
     if (g_idx >= num_gaussians) return;
-
+    if (radii[g_idx*2] <= 0 || radii[g_idx*2 + 1] <= 0) return;
     // Fetch the derivatives of the loss w.r.t the final rasterized color.
     const vec3 loss_grad = dL_dc[g_idx];
     const vec3 loss_hess_diag = H_L_dc[g_idx];
@@ -972,6 +1109,9 @@ void launch_assemble_derivatives_kernels(
     const at::Tensor conics_2d,
     const at::Tensor campos,
     const at::Tensor viewmats,
+    const at::Tensor radii,
+    const at::Tensor Ks,
+    const at::Tensor covars,
     const at::Tensor quats,
     // ... other input tensors for the main kernels
     const at::Tensor dL_dcSH_totals,
@@ -1029,11 +1169,10 @@ void launch_assemble_derivatives_kernels(
         reinterpret_cast<const vec3*>(H_L_mean2d_totals.data_ptr<float>()),
         H_L_sigma.data_ptr<float>(),
         H_L_mixed.data_ptr<float>(),
-        reinterpret_cast<const mat3x2*>(jacobians.data_ptr<float>()),
-        dSigma_dp.data_ptr<float>(),
-        H_mean2d_dp.data_ptr<float>(),
-        H_Sigma_dp.data_ptr<float>(),
         reinterpret_cast<const vec3*>(p_k.data_ptr<float>()),
+        reinterpret_cast<const mat3*>(Ks.data_ptr<float>()),
+        reinterpret_cast<const mat3*>(covars.data_ptr<float>()),
+        radii.data_ptr<int32_t>(),
         reinterpret_cast<const vec3*>(campos.data_ptr<float>()),
         reinterpret_cast<vec2*>(d_L_vk.data_ptr<float>()),
         reinterpret_cast<mat2*>(H_L_vk.data_ptr<float>())

@@ -166,7 +166,7 @@ if (!viewmat.defined()) {
     // Handle error or abort
 }
     // Call the projection function with all outputs
-    auto projection_outputs = gsplat_newton::projection_ewa_3dgs_fused_fwd_LN(
+    auto projection_outputs = gsplat::projection_ewa_3dgs_fused_fwd(
         means3D,
         c10::nullopt, // covars (not used since we're using quats+scales)
         rotations,
@@ -190,6 +190,7 @@ if (!viewmat.defined()) {
     depths = std::get<2>(projection_outputs);
     conics = std::get<3>(projection_outputs);
     compensations = std::get<4>(projection_outputs);
+    /*
     jacobians = std::get<5>(projection_outputs);
     H_mean_y = std::get<6>(projection_outputs);
     H_mean_x = std::get<7>(projection_outputs);
@@ -199,7 +200,7 @@ if (!viewmat.defined()) {
     H_Sigma = std::get<11>(projection_outputs);
     dr_dp = std::get<12>(projection_outputs);
     d2r_dp2_compact = std::get<13>(projection_outputs);
-
+    */
     // Store the outputs in the context if needed
     if (context) {
         context->radii = radii;
@@ -207,19 +208,19 @@ if (!viewmat.defined()) {
         context->depths = depths;
         context->conics = conics;
         //context->compensations = compensations;
-        context->d_mean2d_dp = jacobians;
-        context->H_mean2d_dp = torch::stack({
-        H_mean_x,  // [C, N, 3, 3] for x component
-        H_mean_y   // [C, N, 3, 3] for y component
-    }, /*dim=*/2);
-            context->d_Sigma_dp = torch::stack({
-        dSigma_dx,  // [C, N, 2, 2] derivative w.r.t. x
-        dSigma_dy,   // [C, N, 2, 2] derivative w.r.t. y
-        dSigma_dz    // [C, N, 2, 2] derivative w.r.t. z
-    }, /*dim=*/2);
-        context->H_Sigma_dp = H_Sigma;
-        context->d_r_dp = dr_dp;
-        context->H_r_dp = d2r_dp2_compact;
+        //context->d_mean2d_dp = jacobians;
+        //context->H_mean2d_dp = torch::stack({
+        //H_mean_x,  // [C, N, 3, 3] for x component
+        //H_mean_y   // [C, N, 3, 3] for y component
+        //}, /*dim=*/2);
+        //context->d_Sigma_dp = torch::stack({
+        //dSigma_dx,  // [C, N, 2, 2] derivative w.r.t. x
+        //dSigma_dy,   // [C, N, 2, 2] derivative w.r.t. y
+        //dSigma_dz    // [C, N, 2, 2] derivative w.r.t. z
+        //}, /*dim=*/2);
+        //context->H_Sigma_dp = H_Sigma;
+        //context->d_r_dp = dr_dp;
+        //context->H_r_dp = d2r_dp2_compact;
     }
 
     // ========================================================================
@@ -324,29 +325,6 @@ if (!viewmat.defined()) {
         context->tile_offsets = isect_offsets;
         context->render_alphas = rendered_alpha;
     }
-    // ========================================================================
-    // 5. LOSS & DERIVATIVE AGGREGATION
-    // ========================================================================
-    // Compute loss and its derivatives, then run the aggregation kernel which
-    // acts as the "backward" pass for the rasterizer.
-    /*
-    // Compute loss and its derivatives w.r.t. pixel colors
-    auto [loss, dL_dcolor, d2L_dcolor2] = gsplat_newton::compute_loss_and_derivatives(
-        rendered_image,
-        gt_image,
-        0.2f // lambda_ssim, can be a parameter
-    );
-
-    // This kernel aggregates all per-pixel derivatives into per-Gaussian sums
-    gsplat_newton::aggregate_intermediate_derivatives(
-        context,
-        rendered_image,
-        rendered_alpha,
-        last_ids,
-        dL_dcolor,
-        d2L_dcolor2
-    );
-    */
     // ========================================================================
     // 6. PREPARE OUTPUT
     // ========================================================================

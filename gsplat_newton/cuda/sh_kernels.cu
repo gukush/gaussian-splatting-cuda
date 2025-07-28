@@ -340,6 +340,7 @@ void launch_spherical_harmonics_LN_kernel(
 template <typename scalar_t>
 __global__ void chain_rule_color_position_kernel(
     const uint32_t       N,
+    const int32_t* __restrict__ radii,
     const glm::vec3     *p_k,               // [N,3]
     const glm::vec3     *camera_center,     // broadcast
     const glm::vec3     *color_dir_grad,    // [N,3]
@@ -348,7 +349,7 @@ __global__ void chain_rule_color_position_kernel(
     scalar_t            *color_pos_hess     // [N,6] output
 ) {
     uint32_t idx = cg::this_grid().thread_rank();
-    if (idx >= N) return;
+    if (idx >= N || radii[idx * 2] <= 0 || radii[idx * 2 + 1] <= 0) return;
 
     // Get inputs for this thread
     const glm::vec3& position = p_k[idx];
