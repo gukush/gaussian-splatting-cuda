@@ -292,9 +292,12 @@ namespace gs {
             static_cast<int>(cam->image_width()),
             static_cast<int>(cam->image_height())
         );
-        //auto means_after = strategy_->get_model().get_means();
-        //auto update_norm = (means_after - means_before).norm().item<float>();
-        //std::cout << "Newton update norm: " << update_norm << std::endl;
+        auto means_after = strategy_->get_model().get_means();
+        auto update_norm = (means_after - means_before).norm().item<float>();
+        std::cout << "Newton update norm: " << update_norm << std::endl;
+        if (auto* mcmc_newton = dynamic_cast<MCMCNewton*>(strategy_.get())) {
+            mcmc_newton->set_newton_context(&ctx);
+        }
         {
             torch::NoGradGuard no_grad;
 
