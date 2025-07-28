@@ -243,7 +243,8 @@ compute_intermediate_derivatives_bwd(
 // ========================================================================
 std::tuple<at::Tensor, at::Tensor, at::Tensor,  at::Tensor,
            at::Tensor, at::Tensor, at::Tensor, at::Tensor,
-           at::Tensor, at::Tensor>
+           at::Tensor, at::Tensor,
+           at::Tensor, at::Tensor, at::Tensor > // this row is temporary!!!
 assemble_derivatives_split(
     // Intermediate derivatives
     const at::Tensor dL_dcSH_totals,

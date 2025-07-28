@@ -439,7 +439,8 @@ compute_intermediate_derivatives_bwd(
 // Wrapper function to call all split kernels
 std::tuple<at::Tensor, at::Tensor, at::Tensor,  at::Tensor,
            at::Tensor, at::Tensor, at::Tensor, at::Tensor,
-           at::Tensor, at::Tensor>
+           at::Tensor, at::Tensor,
+           at::Tensor, at::Tensor, at::Tensor > // this row is temporary!!!
 assemble_derivatives_split(
     // Intermediate derivatives
     const at::Tensor dL_dcSH_totals,
@@ -534,7 +535,7 @@ assemble_derivatives_split(
 
     return std::make_tuple(dL_dvk, H_L_dvk, dL_dlambda, H_L_dlambda,
                           dL_dtheta, H_L_dtheta,
-                          dL_dcolor, H_L_dcolor, U_k_bases,T_matrices);
+                          dL_dcolor, H_L_dcolor, U_k_bases,T_matrices, dL_dSigma, H_L_sigma, H_L_mixed);
 }
 // =====================
 // Losses

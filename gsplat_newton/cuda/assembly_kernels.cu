@@ -1327,6 +1327,7 @@ void launch_assemble_derivatives_kernels(
 
     //const int threads = 256;
     //const int blocks  = (num_gaussians + threads - 1) / threads;
+    /*
     debug_derivatives_kernel<<<blocks,threads,0,at::cuda::getCurrentCUDAStream()>>>(
         num_gaussians,
         H_L_conic_totals.data_ptr<float>(),
@@ -1335,6 +1336,7 @@ void launch_assemble_derivatives_kernels(
         H_L_dlambda.data_ptr<float>()
     );
     C10_CUDA_KERNEL_LAUNCH_CHECK();
+    */
     // The opacity and color kernels don't need the conversion, so they remain unchanged
 }
 } // namespace gsplat_newton

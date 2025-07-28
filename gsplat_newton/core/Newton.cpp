@@ -78,6 +78,23 @@ void local_newton_backward(
     auto [covars, precis] = gsplat::quat_scale_to_covar_preci_fwd(
             quats, scales, true, false, false);
     context.covars = covars;
+
+    if(true)
+    {
+        auto H_mean = H_L_color_img.mean();
+        auto H_std = H_L_color_img.std(false);
+        auto z_scores = (H_L_color_img - H_mean) / H_std;
+        double threshold = 3.0;
+        auto mask = z_scores.abs() > threshold;
+
+        // 4) Extract outlier values and their indices
+        auto outlier_values  = H_L_color_img.masked_select(mask);
+        auto outlier_indices = mask.nonzero();
+        std::cout << "Outlier sum: " <<mask.sum() <<std::endl;
+        //std::cout << "Outlier values: "  << outlier_values  << "\n"
+        //        << "At positions: "   << outlier_indices << std::endl;
+    }
+
     // --- Stage 1: Backward Pass through Rasterizer ---
     // Computes per-Gaussian aggregated derivatives from image-space loss derivatives.
     auto intermediate_derivs = compute_intermediate_derivatives_bwd(
@@ -96,9 +113,10 @@ void local_newton_backward(
         last_ids,
         context.dL_d_color_img,
         context.H_L_color_img,
-        means.size(0)
+        means.size(0)//100 is workaround for when we call this function with compute sanitizer
     );
 
+    /*
     dump_to_csv(context.means2d,"means2d.csv");
     dump_to_csv(context.conics,"conics.csv");
     dump_to_csv(context.colors,"colors.csv");
@@ -109,10 +127,12 @@ void local_newton_backward(
     dump_to_csv(last_ids,"last_ids.csv");
     dump_to_csv(context.dL_d_color_img,"dL_d_color_img.csv");
     dump_to_csv(context.H_L_color_img,"H_L_color_img.csv");
+    dump_to_csv(context.radii,"radii.csv");
     std::cout << "means.size(0): "<<means.size(0) <<std::endl;
     std::cout << "image_width: "<<image_width <<std::endl;
     std::cout << "image_height: "<<image_height <<std::endl;
-    assert(false && "Waiting for dump!");
+    */
+
     auto dtheta_out = compute_covariance_derivatives(
         means,
         quats,
@@ -134,6 +154,23 @@ void local_newton_backward(
 
     context.dL_d_opacity = std::get<8>(intermediate_derivs);
     context.H_L_opacity = std::get<9>(intermediate_derivs);
+    /*
+    dump_to_csv(dSigma_dtheta,       "dSigma_dtheta.csv");
+    dump_to_csv(H_Sigma_dtheta,      "H_Sigma_dtheta.csv");
+
+    dump_to_csv(dL_dcSH_totals,      "dL_dcSH_totals.csv");
+    dump_to_csv(H_L_dcSH_totals,     "H_L_dcSH_totals.csv");
+    dump_to_csv(dL_dG_totals,        "dL_dG_totals.csv");
+    dump_to_csv(dL_dmean2d_totals,   "dL_dmean2d_totals.csv");
+    dump_to_csv(dL_dconic_totals,    "dL_dconic_totals.csv");
+    dump_to_csv(H_L_mean2d_totals,   "H_L_mean2d_totals.csv");
+    dump_to_csv(H_L_conic_totals,    "H_L_conic_totals.csv");
+    dump_to_csv(H_L_mixedinv_totals, "H_L_mixedinv_totals.csv");
+
+    dump_to_csv(context.dL_d_opacity, "dL_d_opacity.csv");
+    dump_to_csv(context.H_L_opacity,  "H_L_opacity.csv");
+
+    */
     if(print) {
     std::cout << "dL_dcSH_totals NaN: " << torch::isnan(dL_dcSH_totals).any().item<bool>() << std::endl;
     std::cout << "dL_dmean2d_totals NaN: " << torch::isnan(dL_dmean2d_totals).any().item<bool>() << std::endl;
@@ -248,6 +285,13 @@ void local_newton_backward(
     context.U_k_bases     = std::get<8>(newton_systems);
     context.T_matrices    = std::get<9>(newton_systems);
 
+    auto dL_sigma = std::get<10>(newton_systems);
+    auto H_L_sigma = std::get<11>(newton_systems);
+    auto H_L_mixed = std::get<12>(newton_systems);
+    dump_to_csv(dL_sigma,        "dL_sigma.csv");
+    dump_to_csv(H_L_sigma,   "H_L_sigma.csv");
+    dump_to_csv(H_L_mixed,    "H_L_mixed.csv");
+    assert(false && "Waiting for dump!");
     // We will need to compute color derivatives separately or assume they are part of another tensor.
     // For now, creating placeholder tensors for color update.
     //context.dL_d_color = torch::zeros({means.size(0), 3}, means.options());
