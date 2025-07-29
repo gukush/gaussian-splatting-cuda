@@ -106,6 +106,40 @@ __device__ __forceinline__ vec4 quat_mul(const vec4 &q, const vec4 &p)
         q.w * p.w - q.x * p.x - q.y * p.y - q.z * p.z);
 }
 
+
+__device__ inline vec3 solve_sym3x3_cholesky(const mat3 &M, const vec3 &b) {
+    // small ridge to guarantee positive–definite
+    const float eps = 1e-6f;
+
+    // load + regularize diagonal
+    float m00 = M[0][0] + eps;
+    float m01 = M[0][1];
+    float m02 = M[0][2];
+    float m11 = M[1][1] + eps;
+    float m12 = M[1][2];
+    float m22 = M[2][2] + eps;
+
+    // --- Cholesky factorization M+eps·I = L * L^T ---
+    float l00 = sqrtf(m00);
+    float l10 = m01 / l00;
+    float l20 = m02 / l00;
+    float l11 = sqrtf(m11 - l10*l10);
+    float l21 = (m12 - l20*l10) / l11;
+    float l22 = sqrtf(m22 - l20*l20 - l21*l21);
+
+    // --- forward substitution L * y = b ---
+    float y0 = b.x / l00;
+    float y1 = (b.y - l10*y0) / l11;
+    float y2 = (b.z - l20*y0 - l21*y1) / l22;
+
+    // --- back substitution L^T * x = y ---
+    vec3 x;
+    x.z = y2 / l22;
+    x.y = (y1 - l21*x.z) / l11;
+    x.x = (y0 - l10*x.y - l20*x.z) / l00;
+    return x;
+}
+
 // TODO add CDIM as template parameter
 // This single kernel handles solving and updating for all attributes for one Gaussian.
 // Each thread processes one Gaussian.
@@ -166,34 +200,49 @@ __global__ void solve_updates_and_backproject_kernel_impl(
     vec2  delta_lambda = -glm::inverse(H_scale) * g_scale;
     if (gid % 1000 == 0) {
         printf("Delta_lambda: %f %f \n", delta_lambda.x, delta_lambda.y);
-    }
-    mat2x3 T_k   = glm::make_mat2x3(T_k_matrices + gid * 6);
-    /*
-    if (gid % 1000 == 0) {
-        printf(
-            "T_k:\n %f %f %f \n %f %f %f\n", T_k[0][0], T_k[0][1], T_k[0][2],
-                                            T_k[1][0], T_k[1][1], T_k[1][2]);
-    }
-    */
-    mat3x2 T_k_T = glm::transpose(T_k);
+    } float dlambda_min = 1e-5f;
+    if(fabsf(delta_lambda.x) < dlambda_min && fabs(delta_lambda.y) < dlambda_min)
+    {
+        // do nothing, but dont return, we still need other updates!
 
-    // (3×2)*(2×3) manual
-    mat3 TtT = mul_mat3x2_mat2x3(T_k_T, T_k);
-    regularize_3x3_if_needed(TtT);
-    mat3 TtT_inv = glm::inverse(TtT);
-    /*
-    if (gid % 1000 == 0) {
-        printf(
-            "TtT_inv:\n %f %f %f \n %f %f %f \n %f %f %f\n", TtT_inv[0][0], TtT_inv[1][0], TtT_inv[2][0],
-                                                           TtT_inv[0][1], TtT_inv[1][1], TtT_inv[2][1],
-                                                           TtT_inv[2][0],TtT_inv[2][1],TtT_inv[2][2]);
-    }*/
-    vec3 temp_vec = mul_mat3x2_vec2(T_k_T, delta_lambda);
-    vec3 delta_s  = mul_mat3_vec3(TtT_inv, temp_vec);
-    scales[gid * 3 + 0] = fmaxf(1e-4f, scales[gid * 3 + 0] + delta_s.x);
-    scales[gid * 3 + 1] = fmaxf(1e-4f, scales[gid * 3 + 1] + delta_s.y);
-    scales[gid * 3 + 2] = fmaxf(1e-4f, scales[gid * 3 + 2] + delta_s.z);
+        //printf("lambda too small; Skipping id: %d\n", gid);
+    }
+    else
+    {
+        // proceed with update
+        mat2x3 T_k   = glm::make_mat2x3(T_k_matrices + gid * 6);
+        /*
+        if (gid % 1000 == 0) {
+            printf(
+                "T_k:\n %f %f %f \n %f %f %f\n", T_k[0][0], T_k[0][1], T_k[0][2],
+                                                T_k[1][0], T_k[1][1], T_k[1][2]);
+        }
+        */
+        mat3x2 T_k_T = glm::transpose(T_k);
 
+        // (3×2)*(2×3) manual
+        mat3 TtT = mul_mat3x2_mat2x3(T_k_T, T_k);
+        vec3 rhs = mul_mat3x2_vec2(T_k_T, delta_lambda);
+        vec3 delta_s = solve_sym3x3_cholesky(TtT, rhs);
+        //regularize_3x3_if_needed(TtT);
+        //mat3 TtT_inv = glm::inverse(TtT);
+        if (gid % 1000 == 0)
+        {
+            printf("delta_s: %f %f %f\n",delta_s.x, delta_s.y, delta_s.z);
+        }
+        /*
+        if (gid % 1000 == 0) {
+            printf(
+                "TtT_inv:\n %f %f %f \n %f %f %f \n %f %f %f\n", TtT_inv[0][0], TtT_inv[1][0], TtT_inv[2][0],
+                                                            TtT_inv[0][1], TtT_inv[1][1], TtT_inv[2][1],
+                                                            TtT_inv[2][0],TtT_inv[2][1],TtT_inv[2][2]);
+        }*/
+        //vec3 temp_vec = mul_mat3x2_vec2(T_k_T, delta_lambda);
+        //vec3 delta_s  = mul_mat3_vec3(TtT_inv, temp_vec);
+        scales[gid * 3 + 0] = fmaxf(1e-4f, scales[gid * 3 + 0] + delta_s.x);
+        scales[gid * 3 + 1] = fmaxf(1e-4f, scales[gid * 3 + 1] + delta_s.y);
+        scales[gid * 3 + 2] = fmaxf(1e-4f, scales[gid * 3 + 2] + delta_s.z);
+    }
     // ---------------------------------------------------------------------
     // Rotation update ------------------------------------------------------
     // ---------------------------------------------------------------------
@@ -204,7 +253,11 @@ __global__ void solve_updates_and_backproject_kernel_impl(
     } else {
         H_rot += kMatInvEps;
     }
+
     float delta_theta = -g_rot / H_rot;  // small angle
+        if(gid % 1000 == 0){
+        printf("Delta theta: %f\n",delta_theta);
+    }
     // axis = view_dir (already world‑space unit)
     vec3 axis = glm::normalize(glm::make_vec3(view_dirs + gid * 3));
     float half = 0.5f * delta_theta;

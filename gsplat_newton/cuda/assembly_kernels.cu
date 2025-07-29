@@ -1283,7 +1283,7 @@ __global__ void compute_scale_derivatives_kernel(
     const int num_gaussians,
     const int32_t* __restrict__ radii,
     const vec3* __restrict__ dL_dSigma_totals,
-    const float* __restrict__ H_L_conic_totals,
+    const float* __restrict__ H_L_sigma_totals,
     const float* __restrict__ viewmats,
     const float* __restrict__ quats,
     const vec3* __restrict__ scales,
@@ -1319,6 +1319,7 @@ __global__ void compute_scale_derivatives_kernel(
     //vec3 t(vm[3], vm[7], vm[11]);
 
     mat3 covar_world = glm::transpose(covars[g_idx]);
+
     mat3 covar_cam = R_view * covar_world * glm::transpose(R_view);
 
     vec3 pos_world = means[g_idx];
@@ -1337,7 +1338,16 @@ __global__ void compute_scale_derivatives_kernel(
     vec4 quat = glm::make_vec4(quats + g_idx * 4);
     vec3 scale = scales[g_idx];
     //vec3 pos_world = means[g_idx];
-
+    if(false && g_idx % 1000 == 0) {
+        printf("Covar world: %f %f %f\n %f %f %f\n %f %f %f\n",
+            covar_world[0][0], covar_world[1][0], covar_world[2][0],
+            covar_world[0][1], covar_world[1][1], covar_world[2][1],
+            covar_world[0][2], covar_world[1][2], covar_world[2][2]);
+    }
+    if(false && g_idx % 1000 == 0) {
+        printf("Scale: %f %f %f\n",
+            scale.x, scale.y, scale.z);
+    }
     // Transform position to camera space
     //vec3 pos_cam = R_view * pos_world + t_view;
     const float z = pos_cam.z;
@@ -1352,16 +1362,20 @@ __global__ void compute_scale_derivatives_kernel(
 
     // Load loss derivatives
     vec3 L_Sigma = dL_dSigma_totals[g_idx];
-    const float* Hc = H_L_conic_totals + g_idx*6;
+    const float* Hc = H_L_sigma_totals + g_idx*6;
     mat3 H_SigmaSigma = unpack_H_SigmaSigma(Hc);
 
     // Eigendecompose 2D covariance (Projected from J)
     mat2 cov = J * covar_cam * glm::transpose(J);
-    //vec3 cov = conics_2d[g_idx];
+    if(true && g_idx % 1000 == 0) {
+        printf("Covar (2d): %f %f\n %f %f\n",
+            cov[0][0], cov[1][0],
+            cov[0][1], cov[1][1]);
+    }
     float λmin, λmax;
     vec2 vmin, vmax;
-    eigen_decomposition_2d(cov[0][0], cov[1][1], cov[0][1], λmin, λmax, vmin, vmax);
-    if(g_idx % 1000 == 0) {
+    eigen_decomposition_2d(cov[0][0], cov[0][1], cov[1][1], λmin, λmax, vmin, vmax);
+    if(true && g_idx % 1000 == 0) {
         printf("λmin: %f λmax: %f vmin:[ %f %f ]vmax.x:[ %f %f ]\n",λmin,λmax, vmin.x, vmin.y, vmax.x, vmax.y);
     }
     // Compute derivatives of 2D covariance w.r.t. world scales
@@ -1654,8 +1668,8 @@ void launch_assemble_derivatives_kernels(
         H_L_sigma.data_ptr<float>(),
         viewmats.data_ptr<float>(),
         quats.data_ptr<float>(),
-        reinterpret_cast<const vec3*>(p_k.data_ptr<float>()),
         reinterpret_cast<const vec3*>(scales.data_ptr<float>()),
+        reinterpret_cast<const vec3*>(p_k.data_ptr<float>()),
         reinterpret_cast<const mat3*>(Ks.data_ptr<float>()),
         reinterpret_cast<const mat3*>(covars.data_ptr<float>()),
         dSigma_dp_temp.data_ptr<float>(),
