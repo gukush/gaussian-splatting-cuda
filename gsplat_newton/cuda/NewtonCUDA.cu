@@ -20,6 +20,51 @@ __constant__ float kL1Eps        = 1e-4f;    // smooth corner ε
 // Small helpers ---------------------------------------------------------------
 // -----------------------------------------------------------------------------
 
+
+// Helper function for 2x2 matrix regularization
+__device__ __forceinline__ void regularize_2x2_if_needed(mat2& M, float fixed_eps = 1e-6f, float det_threshold = 1e-8f) {
+    // Compute determinant
+    float det = M[0][0] * M[1][1] - M[0][1] * M[1][0];
+
+    if (fabsf(det) < det_threshold) {
+        // Matrix is near singular - use adaptive regularization
+        float max_diag = fmaxf(fabsf(M[0][0]), fabsf(M[1][1]));
+        float adaptive_eps = fmaxf(fixed_eps, max_diag * 1e-4f);
+
+        M[0][0] += adaptive_eps;
+        M[1][1] += adaptive_eps;
+    } else {
+        // Matrix is well-conditioned - use simple fixed regularization
+        M[0][0] += fixed_eps;
+        M[1][1] += fixed_eps;
+    }
+}
+
+
+// Helper function for 3x3 matrix regularization
+__device__ __forceinline__ void regularize_3x3_if_needed(mat3& M, float fixed_eps = 1e-6f, float det_threshold = 1e-8f) {
+    // Compute determinant for 3x3
+    float det = M[0][0] * (M[1][1] * M[2][2] - M[1][2] * M[2][1])
+              - M[0][1] * (M[1][0] * M[2][2] - M[1][2] * M[2][0])
+              + M[0][2] * (M[1][0] * M[2][1] - M[1][1] * M[2][0]);
+
+    if (fabsf(det) < det_threshold) {
+        // Matrix is near singular - use adaptive regularization
+        float max_diag = fmaxf(fmaxf(fabsf(M[0][0]), fabsf(M[1][1])), fabsf(M[2][2]));
+        float adaptive_eps = fmaxf(fixed_eps, max_diag * 1e-4f);
+
+        M[0][0] += adaptive_eps;
+        M[1][1] += adaptive_eps;
+        M[2][2] += adaptive_eps;
+    } else {
+        // Matrix is well-conditioned - use simple fixed regularization
+        M[0][0] += fixed_eps;
+        M[1][1] += fixed_eps;
+        M[2][2] += fixed_eps;
+    }
+}
+
+
 __device__ __forceinline__ vec3 mul_mat3x2_vec2(const mat3x2 &A, const vec2 &v)
 {
     // A is column‑major (3 columns, 2 rows)
@@ -102,11 +147,8 @@ __global__ void solve_updates_and_backproject_kernel_impl(
     // Position update (Δp_k = U^T Δv_k) -----------------------------------
     // ---------------------------------------------------------------------
     mat2  H_pos = glm::make_mat2(H_L_pos  + gid * 4);
-
-    H_pos[0][0] += kMatInvEps;
-    H_pos[1][1] += kMatInvEps;
+    regularize_2x2_if_needed(H_pos);
     vec2  delta_vk = -glm::inverse(H_pos) * g_pos;
-
     mat2x3 U_k  = glm::make_mat2x3(U_k_bases + gid * 6);
     mat3x2 U_k_T = glm::transpose(U_k);
     vec3  delta_p = mul_mat3x2_vec2(U_k_T, delta_vk);
@@ -120,23 +162,34 @@ __global__ void solve_updates_and_backproject_kernel_impl(
     // ---------------------------------------------------------------------
     mat2  H_scale = glm::make_mat2(H_L_scale  + gid * 4);
 
-    H_scale[0][0] += kMatInvEps;
-    H_scale[1][1] += kMatInvEps;
+    regularize_2x2_if_needed(H_scale);
     vec2  delta_lambda = -glm::inverse(H_scale) * g_scale;
-
+    if (gid % 1000 == 0) {
+        printf("Delta_lambda: %f %f \n", delta_lambda.x, delta_lambda.y);
+    }
     mat2x3 T_k   = glm::make_mat2x3(T_k_matrices + gid * 6);
+    /*
+    if (gid % 1000 == 0) {
+        printf(
+            "T_k:\n %f %f %f \n %f %f %f\n", T_k[0][0], T_k[0][1], T_k[0][2],
+                                            T_k[1][0], T_k[1][1], T_k[1][2]);
+    }
+    */
     mat3x2 T_k_T = glm::transpose(T_k);
 
     // (3×2)*(2×3) manual
     mat3 TtT = mul_mat3x2_mat2x3(T_k_T, T_k);
-    TtT[0][0] += kMatInvEps;
-    TtT[1][1] += kMatInvEps;
-    TtT[2][2] += kMatInvEps;
+    regularize_3x3_if_needed(TtT);
     mat3 TtT_inv = glm::inverse(TtT);
-
+    /*
+    if (gid % 1000 == 0) {
+        printf(
+            "TtT_inv:\n %f %f %f \n %f %f %f \n %f %f %f\n", TtT_inv[0][0], TtT_inv[1][0], TtT_inv[2][0],
+                                                           TtT_inv[0][1], TtT_inv[1][1], TtT_inv[2][1],
+                                                           TtT_inv[2][0],TtT_inv[2][1],TtT_inv[2][2]);
+    }*/
     vec3 temp_vec = mul_mat3x2_vec2(T_k_T, delta_lambda);
     vec3 delta_s  = mul_mat3_vec3(TtT_inv, temp_vec);
-
     scales[gid * 3 + 0] = fmaxf(1e-4f, scales[gid * 3 + 0] + delta_s.x);
     scales[gid * 3 + 1] = fmaxf(1e-4f, scales[gid * 3 + 1] + delta_s.y);
     scales[gid * 3 + 2] = fmaxf(1e-4f, scales[gid * 3 + 2] + delta_s.z);
@@ -145,7 +198,12 @@ __global__ void solve_updates_and_backproject_kernel_impl(
     // Rotation update ------------------------------------------------------
     // ---------------------------------------------------------------------
     float H_rot = H_L_rot[gid];
-    H_rot += kMatInvEps;
+    if (fabsf(H_rot) < 1e-8f) {
+    // Near zero Hessian - use adaptive regularization
+        H_rot += fmaxf(kMatInvEps, fabsf(H_rot) * 1e-4f);
+    } else {
+        H_rot += kMatInvEps;
+    }
     float delta_theta = -g_rot / H_rot;  // small angle
     // axis = view_dir (already world‑space unit)
     vec3 axis = glm::normalize(glm::make_vec3(view_dirs + gid * 3));

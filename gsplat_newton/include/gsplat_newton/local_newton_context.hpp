@@ -1,6 +1,6 @@
 #pragma once
 #include <torch/torch.h>
-
+#include <fstream>
 // This struct holds all intermediate tensors required for the local Newton optimization.
 // It is populated by the projection and rasterization kernels and consumed by the assembly and update kernels.
 struct LocalNewtonContext {
@@ -75,3 +75,33 @@ struct LocalNewtonContext {
     torch::Tensor dL_d_color;
     torch::Tensor H_L_color;
 };
+
+
+inline void dump_to_csv(const torch::Tensor& tensor,
+                        const std::string& filename,
+                        int precision = 8) {
+    // Move to CPU + double, capture original shape, then flatten
+    auto t_cpu = tensor.to(torch::kCPU).to(torch::kFloat64);
+    std::vector<int64_t> shape(t_cpu.sizes().begin(), t_cpu.sizes().end());
+    auto flat = t_cpu.flatten();
+
+    // Open file
+    std::ofstream out(filename);
+    if (!out.is_open()) {
+        throw std::runtime_error("Could not open file " + filename);
+    }
+
+    // 1) Write shape header: e.g. "3,4,5"
+    for (size_t i = 0; i < shape.size(); ++i) {
+        out << shape[i] << (i + 1 < shape.size() ? ',' : '\n');
+    }
+
+    // 2) Write data values, one per line
+    const double* data = flat.data_ptr<double>();
+    int64_t N = flat.numel();
+    out << std::fixed << std::setprecision(precision);
+    for (int64_t i = 0; i < N; ++i) {
+        out << data[i] << '\n';
+    }
+    out.close();
+}

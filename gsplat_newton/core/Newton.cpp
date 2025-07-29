@@ -12,34 +12,7 @@
 
 namespace gsplat_newton {
 
-    inline void dump_to_csv(const torch::Tensor& tensor,
-                            const std::string& filename,
-                            int precision = 8) {
-        // Move to CPU + double, capture original shape, then flatten
-        auto t_cpu = tensor.to(torch::kCPU).to(torch::kFloat64);
-        std::vector<int64_t> shape(t_cpu.sizes().begin(), t_cpu.sizes().end());
-        auto flat = t_cpu.flatten();
 
-        // Open file
-        std::ofstream out(filename);
-        if (!out.is_open()) {
-            throw std::runtime_error("Could not open file " + filename);
-        }
-
-        // 1) Write shape header: e.g. "3,4,5"
-        for (size_t i = 0; i < shape.size(); ++i) {
-            out << shape[i] << (i + 1 < shape.size() ? ',' : '\n');
-        }
-
-        // 2) Write data values, one per line
-        const double* data = flat.data_ptr<double>();
-        int64_t N = flat.numel();
-        out << std::fixed << std::setprecision(precision);
-        for (int64_t i = 0; i < N; ++i) {
-            out << data[i] << '\n';
-        }
-        out.close();
-    }
 
 void local_newton_backward(
     LocalNewtonContext& context,
@@ -154,6 +127,8 @@ void local_newton_backward(
 
     context.dL_d_opacity = std::get<8>(intermediate_derivs);
     context.H_L_opacity = std::get<9>(intermediate_derivs);
+    //dump_to_csv(H_L_conic_totals,    "H_L_conic_totals.csv");
+    //assert(false && "Waiting for dump!");
     /*
     dump_to_csv(dSigma_dtheta,       "dSigma_dtheta.csv");
     dump_to_csv(H_Sigma_dtheta,      "H_Sigma_dtheta.csv");
@@ -164,7 +139,7 @@ void local_newton_backward(
     dump_to_csv(dL_dmean2d_totals,   "dL_dmean2d_totals.csv");
     dump_to_csv(dL_dconic_totals,    "dL_dconic_totals.csv");
     dump_to_csv(H_L_mean2d_totals,   "H_L_mean2d_totals.csv");
-    dump_to_csv(H_L_conic_totals,    "H_L_conic_totals.csv");
+
     dump_to_csv(H_L_mixedinv_totals, "H_L_mixedinv_totals.csv");
 
     dump_to_csv(context.dL_d_opacity, "dL_d_opacity.csv");
@@ -222,6 +197,7 @@ void local_newton_backward(
     std::cout << "dL_dconic_totals norm: " << dL_dconic_totals.norm().item<float>() << std::endl;
     std::cout << "H_L_mean2d_totals norm: " << H_L_mean2d_totals.norm().item<float>() << std::endl;
     std::cout << "H_L_conic_totals norm: " << H_L_conic_totals.norm().item<float>() << std::endl;
+    std::cout << "H_L_mixedinv totals norm: " <<H_L_mixedinv_totals.norm().item<float>() << std::endl;
     }
 
     auto newton_systems = assemble_derivatives_split(
@@ -288,12 +264,24 @@ void local_newton_backward(
     auto dL_sigma = std::get<10>(newton_systems);
     auto H_L_sigma = std::get<11>(newton_systems);
     auto H_L_mixed = std::get<12>(newton_systems);
+
     /*
-    dump_to_csv(dL_sigma,        "dL_sigma.csv");
-    dump_to_csv(H_L_sigma,   "H_L_sigma.csv");
-    dump_to_csv(H_L_mixed,    "H_L_mixed.csv");
+    dump_to_csv(context.dL_d_rot,        "dL_d_rot.csv");
+    dump_to_csv(context.dL_d_scale,   "dL_d_scale.csv");
+    dump_to_csv(context.dL_d_pos,    "dL_d_pos.csv");
+    dump_to_csv(context.dL_d_color,    "dL_d_color.csv");
+    dump_to_csv(context.dL_d_opacity,    "dL_d_opacity.csv");
+    dump_to_csv(context.H_L_color,    "H_L_color.csv");
+    dump_to_csv(context.H_L_pos,    "H_L_pos.csv");
+    dump_to_csv(context.H_L_rot,    "H_L_rot.csv");
+    dump_to_csv(context.H_L_scale,    "H_L_scale.csv");
+    dump_to_csv(context.H_L_opacity,    "H_L_opacity.csv");
+    dump_to_csv(context.U_k_bases,        "U_k_bases.csv");
+    dump_to_csv(context.T_matrices,        "T_matrices.csv");
+    dump_to_csv(context.view_dirs,          "view_dirs.csv");
+
+    // assert(false && "Waiting for dump!");
     */
-    //assert(false && "Waiting for dump!");
     // We will need to compute color derivatives separately or assume they are part of another tensor.
     // For now, creating placeholder tensors for color update.
     //context.dL_d_color = torch::zeros({means.size(0), 3}, means.options());

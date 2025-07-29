@@ -1289,7 +1289,7 @@ __global__ void compute_scale_derivatives_kernel(
     const vec3* __restrict__ scales,
     const vec3* __restrict__ means,
     const mat3* __restrict__ K,
-    const vec3* __restrict__ conics_2d,
+    const mat3 *__restrict__ covars, // TODO: replace conic with covar!!!!!
     const float* __restrict__ dSigma_dp,  // Not used directly anymore
     vec2* __restrict__ dL_dlambda,
     mat2* __restrict__ H_L_dlambda,
@@ -1314,13 +1314,32 @@ __global__ void compute_scale_derivatives_kernel(
     mat3 R_view(vm[0], vm[4], vm[8], vm[1], vm[5], vm[9], vm[2], vm[6], vm[10]);
     vec3 t_view(vm[3], vm[7], vm[11]);
 
+
+    //mat3 R(vm[0], vm[4], vm[8], vm[1], vm[5], vm[9], vm[2], vm[6], vm[10]);
+    //vec3 t(vm[3], vm[7], vm[11]);
+
+    mat3 covar_world = glm::transpose(covars[g_idx]);
+    mat3 covar_cam = R_view * covar_world * glm::transpose(R_view);
+
+    vec3 pos_world = means[g_idx];
+    vec3 pos_cam = R_view * pos_world + t_view;
+    const float rz = 1.f / pos_cam.z, rz2 = rz*rz, rz3 = rz2 * rz, rz4 = rz3 * rz;
+    const float fx = K_shared[0][0], fy = K_shared[1][1];
+
+    mat3x2 J(
+        fx * rz, 0.f,
+        0.f,     fy * rz,
+        -fx * pos_cam.x * rz2, -fy * pos_cam.y * rz2
+    );
+
+
     // Load Gaussian parameters
     vec4 quat = glm::make_vec4(quats + g_idx * 4);
     vec3 scale = scales[g_idx];
-    vec3 pos_world = means[g_idx];
+    //vec3 pos_world = means[g_idx];
 
     // Transform position to camera space
-    vec3 pos_cam = R_view * pos_world + t_view;
+    //vec3 pos_cam = R_view * pos_world + t_view;
     const float z = pos_cam.z;
     const float z2 = z * z;
 
@@ -1328,20 +1347,23 @@ __global__ void compute_scale_derivatives_kernel(
     mat3 R_gauss = quat_to_rotmat(quat);
 
     // Camera intrinsics
-    const float fx = K_shared[0][0];
-    const float fy = K_shared[1][1];
+    //const float fx = K_shared[0][0];
+    //const float fy = K_shared[1][1];
 
     // Load loss derivatives
     vec3 L_Sigma = dL_dSigma_totals[g_idx];
     const float* Hc = H_L_conic_totals + g_idx*6;
     mat3 H_SigmaSigma = unpack_H_SigmaSigma(Hc);
 
-    // Eigendecompose 2D covariance
-    vec3 cov = conics_2d[g_idx];
+    // Eigendecompose 2D covariance (Projected from J)
+    mat2 cov = J * covar_cam * glm::transpose(J);
+    //vec3 cov = conics_2d[g_idx];
     float λmin, λmax;
     vec2 vmin, vmax;
-    eigen_decomposition_2d(cov.x, cov.y, cov.z, λmin, λmax, vmin, vmax);
-
+    eigen_decomposition_2d(cov[0][0], cov[1][1], cov[0][1], λmin, λmax, vmin, vmax);
+    if(g_idx % 1000 == 0) {
+        printf("λmin: %f λmax: %f vmin:[ %f %f ]vmax.x:[ %f %f ]\n",λmin,λmax, vmin.x, vmin.y, vmax.x, vmax.y);
+    }
     // Compute derivatives of 2D covariance w.r.t. world scales
     // dΣ_2d/ds = dΣ_2d/dΣ_cam * dΣ_cam/dΣ_world * dΣ_world/ds
 
@@ -1370,12 +1392,13 @@ __global__ void compute_scale_derivatives_kernel(
     // Σ_2d = J * Σ_cam * J^T where J is the Jacobian of projection
 
     // Projection Jacobian at camera position
+    /*
     mat3x2 J(
         fx / z, 0.f,
         0.f, fy / z,
         -fx * pos_cam.x / z2, -fy * pos_cam.y / z2
     );
-
+    */
     // Compute dΣ_2d/ds_i for each scale component
     mat2 dSigma_2d_ds[3];
     for(int i = 0; i < 3; ++i) {
@@ -1634,7 +1657,7 @@ void launch_assemble_derivatives_kernels(
         reinterpret_cast<const vec3*>(p_k.data_ptr<float>()),
         reinterpret_cast<const vec3*>(scales.data_ptr<float>()),
         reinterpret_cast<const mat3*>(Ks.data_ptr<float>()),
-        reinterpret_cast<const vec3*>(conics_2d.data_ptr<float>()),
+        reinterpret_cast<const mat3*>(covars.data_ptr<float>()),
         dSigma_dp_temp.data_ptr<float>(),
         reinterpret_cast<vec2*>(dL_dlambda.data_ptr<float>()),
         reinterpret_cast<mat2*>(H_L_dlambda.data_ptr<float>()),

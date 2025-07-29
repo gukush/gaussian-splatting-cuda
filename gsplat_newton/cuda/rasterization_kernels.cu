@@ -313,6 +313,18 @@ __global__ void compute_intermediate_derivatives_kernel(
                 H_L_conic_local[5] = H_L_G_local * dG_dconic_local.y * dG_dconic_local.y +
                                     dL_dG_local * H_G_conic_local[5];          // (B,B)
 
+                // poor mans LM
+                /*
+                const float H_ABS_FLOOR   = 1e-6f;
+                const float TAU_LO        = 1e-2f;
+                float max_diag = fmaxf(fabsf(H_L_conic_local[0]),
+                 fmaxf(fabsf(H_L_conic_local[1]),
+                       fabsf(H_L_conic_local[5])));
+                float lambda_min = fmaxf(H_ABS_FLOOR, TAU_LO * max_diag); // LM damping term
+                H_L_conic_local[0] += lambda_min;         // (A,A)
+                H_L_conic_local[1] += lambda_min;         // (C,C)
+                H_L_conic_local[5] += lambda_min;         // (B,B)  – diagonals only
+                */
                 /* -- mixed Hessian  Σμa  (flattened in exactly your order) --------- */
                 H_L_mixed_local[0] = H_L_G_local * dG_dmean2d_local.x * dG_dconic_local.x +
                                     dL_dG_local * H_G_mixed_local[0];          // μx–A

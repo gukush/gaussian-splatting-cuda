@@ -289,6 +289,7 @@ namespace gs {
             std::cout << "running solve for updates" <<std::endl;
         }
         auto means_before = strategy_->get_model().get_means().clone();
+        auto scales_before = strategy_->get_model().get_scaling().clone();
         gsplat_newton::solve_and_update(
             ctx,
             strategy_->get_model(),
@@ -296,8 +297,18 @@ namespace gs {
             static_cast<int>(cam->image_height())
         );
         auto means_after = strategy_->get_model().get_means();
+        auto scales_after = strategy_->get_model().get_scaling();
         auto update_norm = (means_after - means_before).norm().item<float>();
         std::cout << "Newton update norm: " << update_norm << std::endl;
+        auto update_median = (means_after - means_before).median().item<float>();
+        std::cout << "Newton update median: " << update_median << std::endl;
+        auto update_std = (means_after - means_before).std().item<float>();
+        std::cout << "Newton update std: " << update_std << std::endl;
+        auto update_mean = (means_after - means_before).mean().item<float>();
+        std::cout << "Newton update mean: " << update_mean << std::endl;
+        //dump_to_csv((means_after - means_before),"delta_pos.csv");
+        dump_to_csv((scales_after - scales_before),"delta_scale.csv");
+        assert(false && "Stopping here for now \n");
         if (auto* mcmc_newton = dynamic_cast<MCMCNewton*>(strategy_.get())) {
             mcmc_newton->set_newton_context(&ctx);
         }
